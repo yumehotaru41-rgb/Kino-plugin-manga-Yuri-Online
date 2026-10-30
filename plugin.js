@@ -1,4 +1,3 @@
-
 // Plugin de Kino para leer obras de yuri-online.com
 // Interfaz tipo lector de manga (Kototoro): Inicio, Biblioteca,
 // Favoritos, Historial, detalle de obra con lista de capítulos y
@@ -28,42 +27,52 @@ function clean(s) {
     .replace(/\s+/g, " ").trim();
 }
 
+function abs(u) {
+  return (u && u.indexOf("http") === 0) ? u : BASE + u;
+}
+
 // Tarjetas de obras: <a href=".../manga/slug/"><img src="poster">… <a href>Título</a>
+// Tarjetas de obras: <a href=".../manga/slug/"><img src="poster">… <a href>Título</a>
+// Los enlaces del HTML pueden ser absolutos o relativos (/manga/slug/).
 function seriesCards(html, max) {
   const out = [];
   const seen = {};
-  const re = /href="(https:\/\/yuri-online\.com\/manga\/([a-z0-9][a-z0-9-]+)\/)"/g;
+  const re = /href="((?:https:\/\/yuri-online\.com)?\/manga\/([a-z0-9][a-z0-9-]+)\/)"/g;
   let m;
   while ((m = re.exec(html)) !== null && out.length < (max || 40)) {
     const url = m[1], slug = m[2];
     if (seen[slug] || slug === "page") continue;
     seen[slug] = true;
     const win = html.slice(m.index, m.index + 2500);
-    const im = win.match(/<img[^>]+(?:data-src|src)="(https:\/\/yuri-online\.com\/wp-content\/uploads\/[^"]+)"/);
-    // marcador 18+ justo antes de la tarjeta
-    const before = html.slice(Math.max(0, m.index - 250), m.index);
-    const adult = /18\+/.test(before) || /18\+/.test(win.slice(0, 300));
-    let title = "";
-    const tre = new RegExp('href="' + url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '"[^>]*>([^<]{1,150})<', "g");
-    let t;
-    while ((t = tre.exec(win)) !== null) {
-      const txt = clean(t[1]);
-      if (txt.length > 1) { title = txt; break; }
+    const im = win.match(/<img[^>]+(?:data-src|src)="((?:https:\/\/yuri-online\.com)?\/wp-content\/uploads\/[^"]+)"/);
+    if (im) im[1] = abs(im[1]);
+    // marcador 18+: en la clase de la tarjeta (justo antes del enlace) o
+    // entre el póster y el título de esta misma obra (nunca más allá)
+    const before = html.slice(Math.max(0, m.index - 100), m.index);
+    let title = "", titleIdx = 300;
+    for (const u of [url, abs(url)]) {
+      const tre = new RegExp('href="' + u.replace(/[.*+?^${}()|[\]\\]/g, "\\" + "$&") + '"[^>]*>([^<]{1,150})<', "g");
+      let t;
+      while ((t = tre.exec(win)) !== null) {
+        const txt = clean(t[1]);
+        if (txt.length > 1) { title = txt; titleIdx = t.index; break; }
+      }
+      if (title) break;
     }
-    out.push({ slug, url, poster: im ? im[1] : "", title: title || slug.replace(/-/g, " "), adult });
+    const adult = /18\+/.test(before) || /18\+/.test(win.slice(0, titleIdx));
+    out.push({ slug, url: abs(url), poster: im ? im[1] : "", title: title || slug.replace(/-/g, " "), adult });
   }
   return out;
 }
-
 // Capítulos de una obra: enlaces .../manga/<slug>/capitulo-<n>/
 function chapterList(html, slug) {
   const map = new Map();
   const re = new RegExp(
-    'href="(https:\\/\\/yuri-online\\.com\\/manga\\/' + slug +
-    '\\/capitulo-([a-z0-9][a-z0-9-]*)\\/)"[^>]*>([^<]{0,80})<', "g");
+    'href="((?:https:\\/\\/yuri-online\\.com)?\\/manga\\/' + slug +
+    '\\/capitulo-([a-z0-9][a-z0-9-]*)\\/)"[^>]*>([^<]{0,120})<', "g");
   let m;
   while ((m = re.exec(html)) !== null) {
-    const url = m[1], tail = m[2], txt = clean(m[3]);
+    const url = abs(m[1]), tail = m[2], txt = clean(m[3]);
     if (!map.has(url)) map.set(url, { url, tail, title: txt || "Capítulo " + tail });
   }
   const arr = [...map.values()];
@@ -98,7 +107,7 @@ function seriesMeta(html) {
   const adult = h1 >= 0 && /18\+/.test(html.slice(Math.max(0, h1 - 400), h1));
   return {
     title: pick(/<h1[^>]*>([^<]{1,200})</) || pick(/property="og:title"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:title"/),
-    poster: pick(/property="og:image"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:image"/),
+    poster: abs(pick(/property="og:image"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:image"/)),
     overview: pick(/property="og:description"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:description"/),
     status: labelValue(html, "Estado"),
     genres: labelValue(html, "Género(s)"),
@@ -119,15 +128,17 @@ function labelValue(html, label) {
 function readerImages(html) {
   const urls = [];
   const seen = {};
-  const re = /https:\/\/yuri-online\.com\/__img\/[A-Za-z0-9_\/.-]+\.(?:jpe?g|png|webp|avif)/g;
+  const re = /((?:https:\/\/yuri-online\.com)?\/__img\/[A-Za-z0-9_\/.-]+\.(?:jpe?g|png|webp|avif))/g;
   let m;
   while ((m = re.exec(html)) !== null) {
-    if (!seen[m[0]]) { seen[m[0]] = true; urls.push(m[0]); }
+    const u = abs(m[1]);
+    if (!seen[u]) { seen[u] = true; urls.push(u); }
   }
   if (!urls.length) {
-    const re2 = /data-src="(https:\/\/yuri-online\.com\/wp-content\/uploads\/[^"]+\.(?:jpe?g|png|webp))"/g;
+    const re2 = /(?:data-src|src)="((?:https:\/\/yuri-online\.com)?\/wp-content\/uploads\/[^"]+\.(?:jpe?g|png|webp))"/g;
     while ((m = re2.exec(html)) !== null) {
-      if (!seen[m[1]]) { seen[m[1]] = true; urls.push(m[1]); }
+      const u = abs(m[1]);
+      if (!seen[u]) { seen[u] = true; urls.push(u); }
     }
   }
   return urls;
@@ -173,6 +184,17 @@ const TABS = [
   { value: "historial", label: "Historial", labelEn: "History" },
 ];
 
+// Botón de búsqueda visible, arriba de las pestañas con rejilla
+function searchTile() {
+  return {
+    type: "ListTile", key: "searchBtn",
+    title: "Buscar obra", titleEn: "Search a work",
+    leading: { type: "Icon", name: "search" },
+    trailing: { type: "Icon", name: "arrow_forward" },
+    onTap: { event: "goSearch" },
+  };
+}
+
 function posterCard(item) {
   const titleRow = item.adult
     ? { type: "Row", gap: 6, children: [
@@ -194,7 +216,7 @@ function posterCard(item) {
 
 function gridOf(items, eventMore, loading, done) {
   const body = {
-    type: "ListView", key: "grid", columns: { compact: 3, medium: 4, expanded: 6 }, gap: 12,
+    type: "ListView", key: "grid", flex: 1, columns: { compact: 3, medium: 4, expanded: 6 }, gap: 12,
     items: items.map(posterCard),
     empty: { type: "Text", text: "Nada por aquí todavía.", textEn: "Nothing here yet.", color: "muted", padding: 16 },
   };
@@ -238,7 +260,8 @@ async function tabBody(state) {
   if (tab === "historial") return historyList();
   if (tab === "biblioteca") {
     const items = Array.isArray(state.libItems) ? state.libItems : await fetchLibrary(1);
-    return gridOf(items, "libMore", state.libLoading === true, state.libDone === true);
+    const grid = gridOf(items, "libMore", state.libLoading === true, state.libDone === true);
+    return { type: "Column", children: [searchTile(), grid] };
   }
   return await homeBody(state);
 }
@@ -252,9 +275,9 @@ async function homeBody(state) {
   let items = Array.isArray(state.inicioItems) ? state.inicioItems : null;
   if (!items) {
     const html = await getHtml("/");
-    items = seriesCards(html, 30);
+    items = seriesCards(html, 40);
   }
-  return gridOf(items);
+  return { type: "Column", children: [searchTile(), gridOf(items)] };
 }
 
 // ------------------------------------------------------------- rutas
@@ -322,16 +345,18 @@ async function readerTree(state) {
   const hasNext = r.idx + 1 < r.chapters.length;
   const hasPrev = r.idx > 0;
   const body = [];
+  // El lector ocupa toda la altura disponible (flex: 1): sin él, la lista
+  // no puede desplazarse por sí misma y las páginas salen recortadas.
   if (paged) {
     body.push({
-      type: "PageView", key: "pv", children: pages.map((u, i) => ({
+      type: "PageView", key: "pv", flex: 1, children: pages.map((u, i) => ({
         type: "Image", key: "p" + i, url: u, alt: "Página " + (i + 1),
         fallback: { type: "Text", text: "Página " + (i + 1), color: "muted" },
       })),
     });
   } else {
     body.push({
-      type: "ListView", key: "pages", gap: 4, padding: { compact: 4, expanded: 8 },
+      type: "ListView", key: "pages", flex: 1, gap: 4, padding: { compact: 4, expanded: 8 },
       items: pages.map((u, i) => ({
         type: "Image", key: "p" + i, url: u, alt: "Página " + (i + 1),
         fallback: { type: "Text", text: "Página " + (i + 1), color: "muted" },
@@ -440,7 +465,7 @@ export async function screenEvent(ev) {
       const page = (state.libPage || 1) + 1;
       const more = await fetchLibrary(page);
       const merged = (state.libItems || []).concat(more.filter((x) => !(state.libItems || []).some((y) => y.slug === x.slug)));
-      return { state: { libItems: merged, libPage: page, libDone: more.length < 12 } };
+      return { state: { libItems: merged, libPage: page, libDone: more.length < 6 } };
     }
     if (name === "goSearch") return { route: { push: "search" } };
     if (name === "search") {
@@ -515,6 +540,3 @@ export async function screenEvent(ev) {
   }
   return null;
 }
-
-// Precarga de la pestaña Inicio al abrir (evento reservado "open")
-// — ya cubierta por tabBody() si el estado viene vacío.
