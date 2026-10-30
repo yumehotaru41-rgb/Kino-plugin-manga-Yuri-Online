@@ -1,8 +1,8 @@
 // Plugin de Kino para leer obras de yuri-online.com
 // Interfaz tipo lector de manga (Kototoro): Inicio, Biblioteca,
-// Favoritos, Historial, detalle de obra con lista de capítulos y
-// lector (cascada o paginado). Funciona en teléfono y TV desde el
-// mismo árbol de nodos: Kino dibuja el foco del control remoto.
+// Favoritos, Historial, detalle de obra con lista completa de
+// capítulos (AJAX de Madara) y lector webcómic vertical.
+// Funciona en teléfono y TV desde el mismo árbol de nodos.
 //
 // Requiere Kino 0.9.74 o superior (apiVersion 14, capability "screen").
 
@@ -27,52 +27,42 @@ function clean(s) {
     .replace(/\s+/g, " ").trim();
 }
 
-function abs(u) {
-  return (u && u.indexOf("http") === 0) ? u : BASE + u;
-}
-
 // Tarjetas de obras: <a href=".../manga/slug/"><img src="poster">… <a href>Título</a>
-// Tarjetas de obras: <a href=".../manga/slug/"><img src="poster">… <a href>Título</a>
-// Los enlaces del HTML pueden ser absolutos o relativos (/manga/slug/).
 function seriesCards(html, max) {
   const out = [];
   const seen = {};
-  const re = /href="((?:https:\/\/yuri-online\.com)?\/manga\/([a-z0-9][a-z0-9-]+)\/)"/g;
+  const re = /href="(https:\/\/yuri-online\.com\/manga\/([a-z0-9][a-z0-9-]+)\/)"/g;
   let m;
   while ((m = re.exec(html)) !== null && out.length < (max || 40)) {
     const url = m[1], slug = m[2];
     if (seen[slug] || slug === "page") continue;
     seen[slug] = true;
     const win = html.slice(m.index, m.index + 2500);
-    const im = win.match(/<img[^>]+(?:data-src|src)="((?:https:\/\/yuri-online\.com)?\/wp-content\/uploads\/[^"]+)"/);
-    if (im) im[1] = abs(im[1]);
-    // marcador 18+: en la clase de la tarjeta (justo antes del enlace) o
-    // entre el póster y el título de esta misma obra (nunca más allá)
-    const before = html.slice(Math.max(0, m.index - 100), m.index);
-    let title = "", titleIdx = 300;
-    for (const u of [url, abs(url)]) {
-      const tre = new RegExp('href="' + u.replace(/[.*+?^${}()|[\]\\]/g, "\\" + "$&") + '"[^>]*>([^<]{1,150})<', "g");
-      let t;
-      while ((t = tre.exec(win)) !== null) {
-        const txt = clean(t[1]);
-        if (txt.length > 1) { title = txt; titleIdx = t.index; break; }
-      }
-      if (title) break;
+    const im = win.match(/<img[^>]+(?:data-src|src)="(https:\/\/yuri-online\.com\/wp-content\/uploads\/[^"]+)"/);
+    // marcador 18+ justo antes de la tarjeta
+    const before = html.slice(Math.max(0, m.index - 250), m.index);
+    const adult = /18\+/.test(before) || /18\+/.test(win.slice(0, 300));
+    let title = "";
+    const tre = new RegExp('href="' + url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '"[^>]*>([^<]{1,150})<', "g");
+    let t;
+    while ((t = tre.exec(win)) !== null) {
+      const txt = clean(t[1]);
+      if (txt.length > 1) { title = txt; break; }
     }
-    const adult = /18\+/.test(before) || /18\+/.test(win.slice(0, titleIdx));
-    out.push({ slug, url: abs(url), poster: im ? im[1] : "", title: title || slug.replace(/-/g, " "), adult });
+    out.push({ slug, url, poster: im ? im[1] : "", title: title || slug.replace(/-/g, " "), adult });
   }
   return out;
 }
+
 // Capítulos de una obra: enlaces .../manga/<slug>/capitulo-<n>/
 function chapterList(html, slug) {
   const map = new Map();
   const re = new RegExp(
-    'href="((?:https:\\/\\/yuri-online\\.com)?\\/manga\\/' + slug +
-    '\\/capitulo-([a-z0-9][a-z0-9-]*)\\/)"[^>]*>([^<]{0,120})<', "g");
+    'href="(https?:\\/\\/yuri-online\.com\/manga\/' + slug +
+    '\/capitulo-([a-z0-9][a-z0-9-]*)\/)"[^>]*>([^<]{0,80})<', "g");
   let m;
   while ((m = re.exec(html)) !== null) {
-    const url = abs(m[1]), tail = m[2], txt = clean(m[3]);
+    const url = m[1], tail = m[2], txt = clean(m[3]);
     if (!map.has(url)) map.set(url, { url, tail, title: txt || "Capítulo " + tail });
   }
   const arr = [...map.values()];
@@ -107,7 +97,7 @@ function seriesMeta(html) {
   const adult = h1 >= 0 && /18\+/.test(html.slice(Math.max(0, h1 - 400), h1));
   return {
     title: pick(/<h1[^>]*>([^<]{1,200})</) || pick(/property="og:title"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:title"/),
-    poster: abs(pick(/property="og:image"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:image"/)),
+    poster: pick(/property="og:image"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:image"/),
     overview: pick(/property="og:description"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:description"/),
     status: labelValue(html, "Estado"),
     genres: labelValue(html, "Género(s)"),
@@ -128,20 +118,41 @@ function labelValue(html, label) {
 function readerImages(html) {
   const urls = [];
   const seen = {};
-  const re = /((?:https:\/\/yuri-online\.com)?\/__img\/[A-Za-z0-9_\/.-]+\.(?:jpe?g|png|webp|avif))/g;
+  const re = /https:\/\/yuri-online\.com\/__img\/[A-Za-z0-9_\/.-]+\.(?:jpe?g|png|webp|avif)/g;
   let m;
   while ((m = re.exec(html)) !== null) {
-    const u = abs(m[1]);
-    if (!seen[u]) { seen[u] = true; urls.push(u); }
+    if (!seen[m[0]]) { seen[m[0]] = true; urls.push(m[0]); }
   }
   if (!urls.length) {
-    const re2 = /(?:data-src|src)="((?:https:\/\/yuri-online\.com)?\/wp-content\/uploads\/[^"]+\.(?:jpe?g|png|webp))"/g;
+    const re2 = /data-src="(https:\/\/yuri-online\.com\/wp-content\/uploads\/[^"]+\.(?:jpe?g|png|webp))"/g;
     while ((m = re2.exec(html)) !== null) {
-      const u = abs(m[1]);
-      if (!seen[u]) { seen[u] = true; urls.push(u); }
+      if (!seen[m[1]]) { seen[m[1]] = true; urls.push(m[1]); }
     }
   }
   return urls;
+}
+
+// Carga una obra: página de detalle + lista COMPLETA de capítulos.
+// El listado completo no está en el HTML: Madara lo sirve por AJAX
+// (POST a /manga/<slug>/ajax/chapters/). Se usa el AJAX y, si falla,
+// lo que aparezca en el propio HTML de la página.
+async function loadSeries(slug) {
+  const html = await getHtml("/manga/" + slug + "/");
+  const meta = seriesMeta(html);
+  let chapters = chapterList(html, slug);
+  try {
+    const r = await kino.fetch(BASE + "/manga/" + slug + "/ajax/chapters/", {
+      method: "POST",
+      headers: { "Accept": "text/html", "X-Requested-With": "XMLHttpRequest" },
+      body: { form: {} },
+    });
+    if (r.ok) {
+      const t = await r.text();
+      const ajax = chapterList(t, slug);
+      if (ajax.length > chapters.length) chapters = ajax;
+    }
+  } catch (e) { kino.log("chapters", "ajax falló: " + e.message); }
+  return { slug, meta, chapters };
 }
 
 // ------------------------------------------------------------ almacen
@@ -184,47 +195,36 @@ const TABS = [
   { value: "historial", label: "Historial", labelEn: "History" },
 ];
 
-// Botón de búsqueda visible, arriba de las pestañas con rejilla
-function searchTile() {
-  return {
-    type: "ListTile", key: "searchBtn",
-    title: "Buscar obra", titleEn: "Search a work",
-    leading: { type: "Icon", name: "search" },
-    trailing: { type: "Icon", name: "arrow_forward" },
-    onTap: { event: "goSearch" },
+// Una obra como tarjeta nativa de Kino (titleGrid/titleRail).
+// El toque abre esta misma pantalla en la ruta "detail" con el slug;
+// el evento reservado "open" carga los datos al llegar ahí.
+function kinoItem(it) {
+  const item = {
+    id: "yuri-" + it.slug, ref: it.slug,
+    title: it.title, kind: "movie",
+    open: { screen: { route: "detail", args: { slug: it.slug } } },
   };
+  if (it.poster) item.poster = it.poster;
+  return item;
 }
 
-function posterCard(item) {
-  const titleRow = item.adult
-    ? { type: "Row", gap: 6, children: [
-        { type: "Badge", text: "18+" },
-        { type: "Text", text: item.title, style: "caption", maxLines: 2, flex: 1 } ] }
-    : { type: "Text", text: item.title, style: "caption", maxLines: 2 };
-  return {
-    type: "Card", key: "c-" + item.slug, flush: true,
-    onTap: { event: "openSeries", arg: item.slug },
-    children: [
-      { type: "Image", url: item.poster, aspect: "2:3", alt: item.title,
-        fallback: { type: "Column", padding: 12, children: [
-          { type: "Icon", name: "list", color: "muted" },
-          { type: "Text", text: "Sin portada", textEn: "No cover", style: "caption" } ] } },
-      { type: "Column", padding: 8, gap: 2, children: [titleRow] },
-    ],
-  };
-}
+const EMPTY_LIB = { type: "emptyState", icon: "list", title: "Nada por aquí todavía.", titleEn: "Nothing here yet." };
+const EMPTY_FAV = { type: "emptyState", icon: "heart", title: "Marca obras con el corazón para verlas aquí.", titleEn: "Mark works with the heart to see them here." };
 
-function gridOf(items, eventMore, loading, done) {
-  const body = {
-    type: "ListView", key: "grid", flex: 1, columns: { compact: 3, medium: 4, expanded: 6 }, gap: 12,
-    items: items.map(posterCard),
-    empty: { type: "Text", text: "Nada por aquí todavía.", textEn: "Nothing here yet.", color: "muted", padding: 16 },
+function titleGridOf(items, eventMore, loading, done, emptyNode) {
+  if (!items || !items.length) return emptyNode || EMPTY_LIB;
+  const grid = {
+    type: "titleGrid", key: "grid",
+    columns: { compact: 3, medium: 4, expanded: 6 },
+    items: items.map(kinoItem),
   };
   if (eventMore && !done) {
-    body.onEndReached = { event: eventMore };
-    body.loadingMore = loading === true;
+    grid.onEndReached = { event: eventMore };
+    grid.loadingMore = loading === true;
+  } else {
+    grid.done = true;
   }
-  return body;
+  return grid;
 }
 
 function historyList() {
@@ -232,7 +232,7 @@ function historyList() {
   const rows = Object.keys(p).map((slug) => ({ slug, p: p[slug] }))
     .sort((a, b) => b.p.ts - a.p.ts).slice(0, 50);
   if (!rows.length) {
-    return { type: "Text", text: "Todavía no has leído nada.", textEn: "You have not read anything yet.", color: "muted", padding: 16 };
+    return { type: "emptyState", icon: "schedule", title: "Todavía no has leído nada.", titleEn: "You have not read anything yet." };
   }
   return {
     type: "ListView", key: "hist",
@@ -246,22 +246,13 @@ function historyList() {
   };
 }
 
-function favGrid() {
-  const f = favs();
-  if (!f.length) {
-    return { type: "Text", text: "Marca obras con el corazón para verlas aquí.", textEn: "Mark works with the heart to see them here.", color: "muted", padding: 16 };
-  }
-  return gridOf(f);
-}
-
 async function tabBody(state) {
   const tab = state.tab || "inicio";
-  if (tab === "favoritos") return favGrid();
+  if (tab === "favoritos") return titleGridOf(favs(), null, false, true, EMPTY_FAV);
   if (tab === "historial") return historyList();
   if (tab === "biblioteca") {
     const items = Array.isArray(state.libItems) ? state.libItems : await fetchLibrary(1);
-    const grid = gridOf(items, "libMore", state.libLoading === true, state.libDone === true);
-    return { type: "Column", children: [searchTile(), grid] };
+    return titleGridOf(items, "libMore", state.libLoading === true, state.libDone === true);
   }
   return await homeBody(state);
 }
@@ -271,20 +262,42 @@ async function fetchLibrary(page) {
   return seriesCards(html, 36);
 }
 
+// Inicio: una fila de tarjetas de Kino con lo más reciente
 async function homeBody(state) {
   let items = Array.isArray(state.inicioItems) ? state.inicioItems : null;
   if (!items) {
     const html = await getHtml("/");
-    items = seriesCards(html, 40);
+    items = seriesCards(html, 30);
   }
-  return { type: "Column", children: [searchTile(), gridOf(items)] };
+  if (!items.length) return EMPTY_LIB;
+  return {
+    type: "SingleChildScrollView", key: "home", flex: 1,
+    children: [{
+      type: "Column", children: [
+        { type: "titleRail", key: "latest", title: "Últimas obras", titleEn: "Latest works",
+          size: "small", done: true, items: items.map(kinoItem) },
+      ],
+    }],
+  };
 }
 
 // ------------------------------------------------------------- rutas
 
+function routeSlug(r) {
+  if (!r) return "";
+  return String((r.args && r.args.slug) || (r.params && r.params.slug) || r.slug || "");
+}
+
+function loadingTree(msg) {
+  return { type: "Column", padding: 32, gap: 12, crossAxisAlignment: "center", children: [
+    { type: "CircularProgressIndicator" },
+    { type: "Text", text: msg || "Cargando…", textEn: "Loading…", color: "muted" },
+  ] };
+}
+
 async function detailTree(state) {
   const d = state.detail;
-  if (!d) return { type: "Spinner" };
+  if (!d) return loadingTree();
   const fav = isFav(d.slug);
   if (d.meta && d.meta.adult && !adultAllowed()) {
     return { type: "Column", padding: 16, gap: 8, children: [
@@ -293,18 +306,22 @@ async function detailTree(state) {
       { type: "Text", text: "Esta obra está marcada como contenido para adultos. Activa «Mostrar contenido 18+» en Ajustes ▸ Plugins ▸ Yuri Online para leerla.", textEn: "This work is marked adult. Turn on \"Show 18+ content\" in Settings ▸ Plugins ▸ Yuri Online to read it.", color: "muted" },
     ] };
   }
+  // Portada con la forma propia de la imagen y ancho acotado: nunca recortada
+  const cover = d.meta.poster
+    ? { type: "Image", url: d.meta.poster, width: { compact: 120, expanded: 160 }, alt: d.meta.title,
+        fallback: { type: "Icon", name: "list" } }
+    : { type: "Icon", name: "list" };
   const head = {
     type: "Row", gap: 16, padding: 16, crossAxisAlignment: "start", stackOnNarrow: true,
     children: [
-      { type: "Image", url: d.meta.poster, aspect: "2:3", alt: d.meta.title,
-        fallback: { type: "Icon", name: "list" } },
+      cover,
       { type: "Column", gap: 6, flex: 2, crossAxisAlignment: "start", children: [
         { type: "Text", text: d.meta.title || d.slug, style: "h2" },
         d.meta.type ? { type: "Text", text: d.meta.type, color: "muted" } : null,
         d.meta.status ? { type: "Badge", text: d.meta.status } : null,
-        d.meta.adult ? { type: "Badge", text: "18+" } : null,
+        d.meta.adult ? { type: "Badge", text: "18+", color: "error" } : null,
         d.meta.genres ? { type: "Text", text: "Géneros: " + d.meta.genres, textEn: "Genres: " + d.meta.genres, color: "muted", style: "caption" } : null,
-        { type: "Text", text: d.meta.overview, style: "body", color: "muted" },
+        { type: "Text", text: d.meta.overview, style: "p", color: "muted" },
         {
           type: "Row", gap: 8, wrap: true, children: [
             { type: "ElevatedButton", key: "start", icon: "play",
@@ -322,7 +339,7 @@ async function detailTree(state) {
       ].filter(Boolean) },
     ],
   };
-  const items = [{ type: "Column", children: [head] }];
+  const items = [head];
   items.push({ type: "Text", text: d.chapters.length + " capítulos", textEn: d.chapters.length + " chapters", style: "h3", padding: 16 });
   for (let i = 0; i < d.chapters.length; i++) {
     const c = d.chapters[i];
@@ -336,33 +353,31 @@ async function detailTree(state) {
   return { type: "ListView", key: "detailBody", items };
 }
 
+// Lector webcómic: todas las páginas a lo ancho, una bajo la otra,
+// en un único scroll vertical (sin recortes, formato vertical).
 async function readerTree(state) {
   const r = state.reader;
-  if (!r) return { type: "Spinner" };
+  if (!r) return loadingTree();
   const pages = r.images || [];
-  const paged = (state.readMode || "cascada") === "paginada" && pages.length > 0 && pages.length <= 24;
   const ch = r.chapters[r.idx];
   const hasNext = r.idx + 1 < r.chapters.length;
   const hasPrev = r.idx > 0;
   const body = [];
-  // El lector ocupa toda la altura disponible (flex: 1): sin él, la lista
-  // no puede desplazarse por sí misma y las páginas salen recortadas.
-  if (paged) {
+  if (pages.length) {
     body.push({
-      type: "PageView", key: "pv", flex: 1, children: pages.map((u, i) => ({
-        type: "Image", key: "p" + i, url: u, alt: "Página " + (i + 1),
-        fallback: { type: "Text", text: "Página " + (i + 1), color: "muted" },
-      })),
+      type: "SingleChildScrollView", key: "pages", flex: 1,
+      children: [{
+        type: "Column", gap: 4, crossAxisAlignment: "stretch",
+        children: pages.map((u, i) => ({
+          type: "Image", key: "p" + i, url: u, fill: true,
+          alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
+          fallback: { type: "Column", padding: 16, children: [
+            { type: "Text", text: "Página " + (i + 1), textEn: "Page " + (i + 1), color: "muted" } ] },
+        })),
+      }],
     });
   } else {
-    body.push({
-      type: "ListView", key: "pages", flex: 1, gap: 4, padding: { compact: 4, expanded: 8 },
-      items: pages.map((u, i) => ({
-        type: "Image", key: "p" + i, url: u, alt: "Página " + (i + 1),
-        fallback: { type: "Text", text: "Página " + (i + 1), color: "muted" },
-      })),
-      empty: { type: "Text", text: "Este capítulo no tiene páginas visibles.", textEn: "This chapter has no visible pages.", color: "muted", padding: 16 },
-    });
+    body.push({ type: "Text", text: "Este capítulo no tiene páginas visibles.", textEn: "This chapter has no visible pages.", color: "muted", padding: 16 });
   }
   body.push({
     type: "Row", gap: 12, padding: 16, mainAxisAlignment: "center", children: [
@@ -375,15 +390,7 @@ async function readerTree(state) {
   });
   return {
     type: "Scaffold",
-    appBar: {
-      title: ch ? ch.title : "Leyendo",
-      actions: [
-        { type: "IconButton", icon: "refresh", key: "mode",
-          labelText: paged ? "Cambiar a cascada" : "Cambiar a paginado",
-          labelTextEn: paged ? "Switch to webtoon" : "Switch to paged",
-          onPressed: "mode" },
-      ],
-    },
+    appBar: { title: ch ? ch.title : "Leyendo", actions: [] },
     body: { type: "Column", children: body },
   };
 }
@@ -393,21 +400,23 @@ async function searchTree(state) {
   const results = Array.isArray(state.results) ? state.results : null;
   return {
     type: "Scaffold",
-    appBar: {
-      title: "Buscar obra", titleEn: "Search a work",
-      actions: [],
-    },
+    appBar: { title: "Buscar obra", titleEn: "Search a work", actions: [] },
     body: {
-      type: "ListView", key: "searchBody", items: [
-        { type: "Form", key: "search", onSubmitted: "search", gap: 8, children: [
-          { type: "TextField", key: "q", kind: "search", value: q,
-            labelText: "Título", labelTextEn: "Title",
-            hintText: "P. ej. Trash Flower", hintEn: "e.g. Trash Flower",
-            required: true },
-          { type: "ElevatedButton", icon: "search", labelText: "Buscar", labelTextEn: "Search", submit: true },
-        ] },
-        results ? gridOf(results) : { type: "Text", text: "Escribe un título y pulsa Buscar.", textEn: "Type a title and press Search.", color: "muted", padding: 16 },
-      ].filter(Boolean),
+      type: "SingleChildScrollView", key: "searchBody",
+      children: [{
+        type: "Column", children: [
+          { type: "Form", key: "search", onSubmitted: "search", gap: 8, padding: 16, children: [
+            { type: "TextField", key: "q", kind: "search", value: q,
+              labelText: "Título", labelTextEn: "Title",
+              hintText: "P. ej. Trash Flower", hintEn: "e.g. Trash Flower",
+              required: true },
+            { type: "ElevatedButton", icon: "search", labelText: "Buscar", labelTextEn: "Search", submit: true },
+          ] },
+          results
+            ? (results.length ? titleGridOf(results) : { type: "emptyState", icon: "search", title: "Sin resultados.", titleEn: "No results." })
+            : { type: "Text", text: "Escribe un título y pulsa Buscar.", textEn: "Type a title and press Search.", color: "muted", padding: 16 },
+        ].filter(Boolean),
+      }],
     },
   };
 }
@@ -417,7 +426,11 @@ async function searchTree(state) {
 export async function screen({ state, route }) {
   const r = route || { name: "home" };
   try {
-    if (r.name === "detail") return await detailTree(state);
+    if (r.name === "detail") {
+      const slug = routeSlug(r);
+      if (!state.detail || state.detail.slug !== slug) return loadingTree();
+      return await detailTree(state);
+    }
     if (r.name === "read") return await readerTree(state);
     if (r.name === "search") return searchTree(state);
   } catch (e) {
@@ -451,7 +464,19 @@ export async function screenEvent(ev) {
   const name = ev.name;
   const state = ev.state || {};
   try {
-    if (name === "open") return null; // primer evento reservado
+    if (name === "open") {
+      // primer evento reservado: al abrir la pantalla de detalle carga la obra
+      const r = ev.route || {};
+      if (r.name === "detail") {
+        const slug = routeSlug(r);
+        if (slug && /^[a-z0-9][a-z0-9-]*$/.test(slug) && (!state.detail || state.detail.slug !== slug)) {
+          const d = await loadSeries(slug);
+          if (!d.chapters.length) return { toast: "No se encontraron capítulos." };
+          return { state: { detail: d } };
+        }
+      }
+      return null;
+    }
     if (name === "tab") {
       const tab = ev.value;
       const patch = { tab };
@@ -465,7 +490,7 @@ export async function screenEvent(ev) {
       const page = (state.libPage || 1) + 1;
       const more = await fetchLibrary(page);
       const merged = (state.libItems || []).concat(more.filter((x) => !(state.libItems || []).some((y) => y.slug === x.slug)));
-      return { state: { libItems: merged, libPage: page, libDone: more.length < 6 } };
+      return { state: { libItems: merged, libPage: page, libDone: more.length < 12 } };
     }
     if (name === "goSearch") return { route: { push: "search" } };
     if (name === "search") {
@@ -521,18 +546,12 @@ export async function screenEvent(ev) {
       if (name === "read") return { state: { reader }, route: { push: "read" } };
       return { state: { reader } };
     }
-    if (name === "mode") {
-      const paged = (state.readMode || "cascada") === "paginada";
-      return { state: { readMode: paged ? "cascada" : "paginada" } };
-    }
     if (name === "openSeries") {
       const slug = String(ev.arg || "");
       if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) return null;
-      const html = await getHtml("/manga/" + slug + "/");
-      const meta = seriesMeta(html);
-      const chapters = chapterList(html, slug);
-      if (!chapters.length) return { toast: "No se encontraron capítulos." };
-      return { state: { detail: { slug, meta, chapters } },
+      const d = await loadSeries(slug);
+      if (!d.chapters.length) return { toast: "No se encontraron capítulos." };
+      return { state: { detail: d },
                route: { push: "detail", params: { slug } } };
     }
   } catch (e) {
