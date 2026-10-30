@@ -4,18 +4,15 @@ Plugin de [Kino](https://kinotvapp.github.io/kino-plugins/) para leer obras de [
 
 ## Características
 
-- **Inicio**: fila «Últimas obras» y, justo debajo, «Mis favoritos»; tarjeta de búsqueda siempre visible.
-- **Biblioteca**, **Favoritos** e **Historial** en pestañas.
-- **Detalle de obra**: portada completa (caja 2:3), estado, géneros, sinopsis y **lista completa de capítulos** por AJAX.
-- **Botón «Continuar»**: si ya empezaste una obra, el detalle ofrece seguir justo donde la dejaste.
-- **Lector webcómic vertical**: solo las páginas reales del capítulo, cada una en una caja con su proporción real — sin recortes.
-- **Pantalla completa (inmersivo)**: el lector oculta toda la interfaz y muestra el capítulo a pantalla completa. Un toque en cualquier página (o OK en el control de la TV) devuelve los botones; el botón «Pantalla completa» vuelve a ocultarlos.
-- **Siguiente capítulo empieza arriba**: el scroll no conserva la posición al cambiar de capítulo.
-- **Páginas más grandes** en celular horizontal y TV (se prioriza el área con recorte mínimo).
-- **Sincronización entre aparatos**: favoritos y progreso de lectura viajan entre tu teléfono y tu TV vinculados (capacidad `shared` de Kino; se validan los datos recibidos).
-- **Favoritos** con botón de texto claro y fila propia en Inicio.
-- **«Ver en la web»** en detalle y lector.
-- **Teléfono y TV** con el mismo árbol de nodos.
+- **Inicio**: fila «Últimas obras» y «Mis favoritos»; **Biblioteca**, **Favoritos** e **Historial** en pestañas.
+- **Detalle de obra**: portada completa (caja 2:3), estado, géneros, sinopsis y **lista completa de capítulos** por AJAX; botón **«Continuar»** donde lo dejaste.
+- **Lector webcómic vertical**:
+  - **Páginas grandes en TV y celular horizontal**: cada página se dibuja a 640 de ancho con proporción 2:3, centrada — llena la pantalla.
+  - En teléfono vertical la caja calza con la proporción real de cada página: **sin recortes**.
+  - **Pantalla completa (inmersivo)**: oculta todos los botones; queda solo un botón flotante (✕) para volver a mostrar los controles — enfocable con el control remoto (OK) y tocable en el teléfono.
+  - **Zoom**: botón «Zoom» que muestra cada página a 640 de ancho dentro de un desplazamiento horizontal — arrastra a los lados para leer los textos pequeños (Kino no tiene zoom de pellizco).
+  - Al cambiar de capítulo el lector arranca desde la primera página.
+- **Sincronización entre aparatos** (`shared`): favoritos y progreso entre teléfono y TV vinculados, validando lo recibido.
 
 ## Contenido 18+
 
@@ -23,26 +20,24 @@ Las obras marcadas como adultas muestran un candado y **no se pueden leer por de
 
 ## Instalación
 
-Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.2.4**.
+Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.2.5**.
+
+## Cambios en 1.2.5
+
+- **Páginas mucho más grandes en TV** (640 de ancho, proporción 2:3, centradas): llenan la pantalla en vez de quedar pequeñas con márgenes.
+- **Modo inmersivo arreglado**: el control remoto ya no se traba (las imágenes de Kino no reciben foco ni tap; ahora el control es un botón flotante enfocable y tocable).
+- **Zoom** con arrastre lateral para textos pequeños (en vez del pellizco, que el lienzo de Kino no soporta).
 
 ## Cambios en 1.2.4
 
-- **Modo inmersivo**: «Pantalla completa» oculta la interfaz del lector; un toque en una página (o OK en la TV) la devuelve.
-- **Siguiente/anterior capítulo** arranca desde la primera página (antes conservaba el scroll).
-- **«Continuar»** en el detalle de la obra: retoma el último capítulo leído.
-- **Sincronización** de favoritos y progreso entre aparatos vinculados (nueva capacidad `shared`; funciona igual sin ella en Kinos antiguos).
-- **Páginas más grandes** en pantallas medianas y anchas.
+- Modo inmersivo, «Continuar» donde lo dejaste, cambio de capítulo desde arriba, sincronización `shared`, páginas más grandes.
 
 ## Cambios anteriores
 
-- **1.2.3**: páginas solo del bloque de lectura (adiós imágenes aleatorias); favoritos con texto claro y fila en Inicio.
-- **1.2.2**: caja de cada página a su proporción real; portada 2:3; botón «Ver en la web».
+- **1.2.3**: páginas solo del bloque de lectura; favoritos con texto claro y fila en Inicio.
+- **1.2.2**: caja de cada página a su proporción real; portada 2:3; «Ver en la web».
 - **1.2.1**: ancho fijo por tamaño; tarjeta de búsqueda en Inicio.
-- **1.2.0**: capítulos completos por AJAX; lector vertical; tarjetas nativas de Kino.
-
-## Estructura
-
-- `kino-plugin.json` · `plugin.js` (plugin tipo *screen*) · `icon.png`
+- **1.2.0**: capítulos completos por AJAX; lector vertical; tarjetas nativas.
 
 ## Nota legal
 

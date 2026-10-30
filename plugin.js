@@ -196,27 +196,52 @@ function pageBig(r) {
   return best ? { width: best.w, height: best.h } : null;
 }
 
-function pageNode(p, i, onTap) {
-  const node = {
+// Cajas por página (devuelve un array: en vertical grande son dos nodos,
+// uno por tamaño). El Image de Kino no tiene modo «ajustar»: siempre rellena
+// su caja recortando (cover) y los anchos altos son solo los de su escala.
+// - compact (teléfono vertical): caja exacta a la proporción real (sin recorte)
+// - medium/expanded (TV, celular horizontal): página GRANDE a 640 de ancho
+//   con proporción 2:3 cuando la página es vertical — llena la pantalla
+// - zoom: página a 640 dentro de un scroll horizontal (Kino no tiene zoom de
+//   pellizco: se hace con Zoom + arrastre lateral)
+function pageNodes(p, i, zoom) {
+  const img = {
     type: "Image", key: "p" + i, url: typeof p === "string" ? p : p.url,
     alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
     fallback: { type: "Column", padding: 16, children: [
       { type: "Text", text: "Página " + (i + 1), textEn: "Page " + (i + 1), color: "muted" } ] },
   };
   const w = (p && p.w) || 0, h = (p && p.h) || 0;
-  if (onTap) node.onTap = onTap;
-  if (w > 0 && h > 0) {
-    const small = pageBox(h / w, 400, 640), big = pageBig(h / w) || pageBox(h / w, 640, 640);
+  const ratio = w > 0 && h > 0 ? h / w : 0;
+  const tall = ratio >= 1.05 && ratio <= 1.8;
+  if (zoom) {
+    if (tall) { img.width = 640; img.aspect = "2:3"; }
+    else {
+      const b = pageBox(ratio || 1.414, 640, 640) || { width: 480, height: 640 };
+      img.width = b.width; img.height = b.height;
+    }
+    return [{ type: "SingleChildScrollView", direction: "horizontal", key: "hz" + i, children: [img] }];
+  }
+  if (ratio > 0 && tall) {
+    const small = pageBox(ratio, 400, 640) || { width: 400, height: 560 };
+    const compact = Object.assign({}, img, { key: "pc" + i, sizes: ["compact"],
+      width: small.width, height: small.height });
+    const big = Object.assign({}, img, { key: "pe" + i, sizes: ["medium", "expanded"],
+      width: 640, aspect: "2:3" });
+    return [compact, big];
+  }
+  if (ratio > 0) {
+    const small = pageBox(ratio, 400, 640), big = pageBig(ratio) || pageBox(ratio, 640, 640);
     if (small && big) {
-      node.width = { compact: small.width, medium: big.width, expanded: big.width };
-      node.height = { compact: small.height, medium: big.height, expanded: big.height };
-      return node;
+      img.width = { compact: small.width, medium: big.width, expanded: big.width };
+      img.height = { compact: small.height, medium: big.height, expanded: big.height };
+      return [img];
     }
   }
   // sin dimensiones conocidas: caja de proporción de página típica
-  node.width = { compact: 400, medium: 400, expanded: 480 };
-  node.height = { compact: 560, medium: 560, expanded: 640 };
-  return node;
+  img.width = { compact: 400, medium: 400, expanded: 480 };
+  img.height = { compact: 560, medium: 560, expanded: 640 };
+  return [img];
 }
 
 // Carga una obra: página de detalle + lista COMPLETA de capítulos.
@@ -530,30 +555,30 @@ async function readerTree(state) {
   // componente nuevo y arranca desde arriba (no hereda la posición anterior)
   const chKey = String(ch ? ch.url : r.idx).replace(/[^a-z0-9]/gi, "").slice(-16);
   const scrollKey = "pages-" + r.idx + "-" + chKey;
-  const pageNodes = pages.map((p, i) => pageNode(p, i, { event: "toggleChrome" }));
-  // modo inmersivo: solo las páginas a pantalla completa; un toque (o OK en
-  // la TV) sobre cualquier página devuelve la interfaz
+  const zoom = r.zoom === true;
+  const pageCol = {
+    type: "Column", gap: 4, crossAxisAlignment: "center",
+    children: pages.flatMap((p, i) => pageNodes(p, i, zoom)),
+  };
+  // modo inmersivo: solo las páginas a pantalla completa. Las imágenes de
+  // Kino no reciben foco ni tap, así que el control es un botón flotante:
+  // enfocable con el control remoto (OK lo activa) y tocable en el teléfono
   if (r.chrome === false) {
     return {
-      type: "SingleChildScrollView", key: scrollKey,
-      children: [{
-        type: "Column", gap: 4, crossAxisAlignment: "center",
-        children: pageNodes,
-      }],
+      type: "Scaffold",
+      floatingActionButton: {
+        type: "FloatingActionButton", key: "fabShow", icon: "close",
+        labelText: "Mostrar controles", labelTextEn: "Show controls",
+        onPressed: { event: "toggleChrome" },
+      },
+      body: { type: "SingleChildScrollView", key: scrollKey, children: [pageCol] },
     };
   }
   const body = [];
-  if (pages.length) {
-    body.push({
-      type: "SingleChildScrollView", key: scrollKey, flex: 1,
-      children: [{
-        type: "Column", gap: 4, crossAxisAlignment: "center",
-        children: pageNodes,
-      }],
-    });
-  } else {
-    body.push({ type: "Text", text: "Este capítulo no tiene páginas visibles.", textEn: "This chapter has no visible pages.", color: "muted", padding: 16 });
-  }
+  body.push({
+    type: "SingleChildScrollView", key: scrollKey, flex: 1,
+    children: [pageCol],
+  });
   body.push({
     type: "Row", gap: 12, padding: 16, mainAxisAlignment: "center", wrap: true, children: [
       { type: "ElevatedButton", icon: "arrow_back", labelText: "Anterior", labelTextEn: "Previous",
@@ -563,6 +588,9 @@ async function readerTree(state) {
         icon: "arrow_forward", onPressed: "nextChap", enabled: hasNext },
       { type: "TextButton", labelText: "Pantalla completa", labelTextEn: "Full screen",
         onPressed: { event: "toggleChrome" } },
+      { type: "TextButton", labelText: zoom ? "Quitar zoom" : "Zoom",
+        labelTextEn: zoom ? "Stop zoom" : "Zoom",
+        onPressed: { event: "zoomToggle" } },
       ch ? { type: "TextButton", labelText: "Ver en la web", labelTextEn: "Open on the web",
         onPressed: { go: { url: { href: ch.url } } } } : null,
     ].filter(Boolean),
@@ -703,8 +731,14 @@ export async function screenEvent(ev) {
       if (!r) return null;
       return { state: { reader: { ...r, chrome: r.chrome === false } } };
     }
+    if (name === "zoomToggle") {
+      const r = state.reader;
+      if (!r) return null;
+      return { state: { reader: { ...r, zoom: !(r.zoom === true) } } };
+    }
     if (name === "read" || name === "nextChap" || name === "prevChap") {
       let chapters, idx, slug, title, poster;
+      const prevReader = state.reader || {};
       if (name === "read") {
         const d = state.detail;
         if (!d) return null;
@@ -729,7 +763,9 @@ export async function screenEvent(ev) {
       }
       if (!images.length) return { toast: "No se encontraron páginas en este capítulo." };
       markRead(slug, title, poster, ch.title, ch.url);
-      const reader = { slug, title, poster, chapters, idx, images, chrome: true };
+      const reader = { slug, title, poster, chapters, idx, images,
+        chrome: name === "read" ? true : prevReader.chrome !== false,
+        zoom: name === "read" ? false : prevReader.zoom === true };
       if (name === "read") return { state: { reader }, route: { push: "read" } };
       return { state: { reader } };
     }
