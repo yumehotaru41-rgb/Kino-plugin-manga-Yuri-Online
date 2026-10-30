@@ -177,7 +177,26 @@ function pageBox(r, wCap, hCap) {
   return null;
 }
 
-function pageNode(p, i) {
+// Caja grande para ventanas medianas/anchas (celular horizontal, TV):
+// se prioriza el área (página grande, casi sin márgenes) aceptando una
+// tolerancia de proporción algo mayor (el recorte que causa es mínimo).
+function pageBig(r) {
+  if (!isFinite(r) || r <= 0) return null;
+  let best = null;
+  for (const w of SIZE_SCALE) {
+    if (w < 240 || w > 640) continue;
+    for (const h of SIZE_SCALE) {
+      if (h < 320 || h > 640) continue;
+      const err = Math.abs(h / w - r) / r;
+      if (err > 0.12) continue;
+      const a = w * h;
+      if (!best || a > best.a) best = { w, h, a };
+    }
+  }
+  return best ? { width: best.w, height: best.h } : null;
+}
+
+function pageNode(p, i, onTap) {
   const node = {
     type: "Image", key: "p" + i, url: typeof p === "string" ? p : p.url,
     alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
@@ -185,11 +204,12 @@ function pageNode(p, i) {
       { type: "Text", text: "Página " + (i + 1), textEn: "Page " + (i + 1), color: "muted" } ] },
   };
   const w = (p && p.w) || 0, h = (p && p.h) || 0;
+  if (onTap) node.onTap = onTap;
   if (w > 0 && h > 0) {
-    const small = pageBox(h / w, 400, 640), big = pageBox(h / w, 640, 640);
+    const small = pageBox(h / w, 400, 640), big = pageBig(h / w) || pageBox(h / w, 640, 640);
     if (small && big) {
-      node.width = { compact: small.width, medium: small.width, expanded: big.width };
-      node.height = { compact: small.height, medium: small.height, expanded: big.height };
+      node.width = { compact: small.width, medium: big.width, expanded: big.width };
+      node.height = { compact: small.height, medium: big.height, expanded: big.height };
       return node;
     }
   }
@@ -241,6 +261,57 @@ function markRead(slug, title, poster, chTitle, url) {
   const p = progress();
   p[slug] = { title, poster, chTitle, url, ts: Date.now() };
   setJson("prog", p);
+  syncPush("prog", p);
+}
+
+// ------------------------------------------------ sincronización (kino.shared)
+// Los favoritos y el progreso viajan entre los aparatos vinculados de la
+// persona: el teléfono escribe y la TV lee al abrir la pantalla (y al revés).
+// Los valores leídos NO son de confianza: otro aparato (quizá con otra
+// versión del plugin) los escribió, así que se valida cada campo.
+
+function syncPush(key, val) {
+  try {
+    if (typeof kino.shared === "object" && kino.shared !== null) kino.shared.set(key, val);
+  } catch (e) { kino.log("sync", e.message); }
+}
+
+function syncPull() {
+  try {
+    if (typeof kino.shared !== "object" || kino.shared === null) return;
+    const sf = kino.shared.get("favs");
+    if (Array.isArray(sf)) {
+      const local = favs();
+      const have = {};
+      for (const f of local) have[f.slug] = true;
+      let changed = false;
+      for (const f of sf.slice(0, 200)) {
+        if (!f || typeof f !== "object" || typeof f.slug !== "string") continue;
+        if (!/^[a-z0-9][a-z0-9-]*$/.test(f.slug) || have[f.slug]) continue;
+        local.push({ slug: f.slug, title: String(f.title || f.slug).slice(0, 200),
+          poster: typeof f.poster === "string" ? f.poster.slice(0, 500) : "" });
+        have[f.slug] = true; changed = true;
+      }
+      if (changed) { setJson("favs", local); syncPush("favs", local); }
+    }
+    const sp = kino.shared.get("prog");
+    if (sp && typeof sp === "object" && !Array.isArray(sp)) {
+      const p = progress();
+      let changed = false;
+      for (const k of Object.keys(sp).slice(0, 200)) {
+        if (!/^[a-z0-9][a-z0-9-]*$/.test(k)) continue;
+        const e = sp[k];
+        if (!e || typeof e !== "object" || typeof e.url !== "string" || typeof e.ts !== "number") continue;
+        if (p[k] && (p[k].ts || 0) >= e.ts) continue;
+        p[k] = { title: String(e.title || k).slice(0, 200),
+          poster: typeof e.poster === "string" ? e.poster.slice(0, 500) : "",
+          chTitle: String(e.chTitle || e.url).slice(0, 200),
+          url: e.url.slice(0, 500), ts: e.ts };
+        changed = true;
+      }
+      if (changed) { setJson("prog", p); syncPush("prog", p); }
+    }
+  } catch (e) { kino.log("sync", e.message); }
 }
 
 // caché de lector (últimos capítulos abiertos), para no volver a pedir
@@ -403,9 +474,17 @@ async function detailTree(state) {
         { type: "Text", text: d.meta.overview, style: "p", color: "muted" },
         {
           type: "Row", gap: 8, wrap: true, children: [
-            { type: "ElevatedButton", key: "start", icon: "play",
-              labelText: "Empezar a leer", labelTextEn: "Start reading",
-              onPressed: { event: "read", arg: "0" } },
+            (function () {
+              const pg = progress()[d.slug];
+              const ci = pg && typeof pg.url === "string" ? d.chapters.findIndex((c) => c.url === pg.url) : -1;
+              const contLabel = ("Continuar: " + (pg.chTitle || d.chapters[ci].title)).slice(0, 60);
+              if (ci > 0) return { type: "ElevatedButton", key: "cont", icon: "play",
+                labelText: contLabel, labelTextEn: contLabel,
+                onPressed: { event: "read", arg: String(ci) } };
+              return { type: "ElevatedButton", key: "start", icon: "play",
+                labelText: "Empezar a leer", labelTextEn: "Start reading",
+                onPressed: { event: "read", arg: "0" } };
+            })(),
             { type: "ElevatedButton", key: "latest", icon: "expand_more",
               labelText: "Leer lo último", labelTextEn: "Read latest",
               onPressed: { event: "read", arg: String(d.chapters.length - 1) } },
@@ -447,13 +526,29 @@ async function readerTree(state) {
   const ch = r.chapters[r.idx];
   const hasNext = r.idx + 1 < r.chapters.length;
   const hasPrev = r.idx > 0;
+  // clave única por capítulo: al cambiar de capítulo el scroll es un
+  // componente nuevo y arranca desde arriba (no hereda la posición anterior)
+  const chKey = String(ch ? ch.url : r.idx).replace(/[^a-z0-9]/gi, "").slice(-16);
+  const scrollKey = "pages-" + r.idx + "-" + chKey;
+  const pageNodes = pages.map((p, i) => pageNode(p, i, { event: "toggleChrome" }));
+  // modo inmersivo: solo las páginas a pantalla completa; un toque (o OK en
+  // la TV) sobre cualquier página devuelve la interfaz
+  if (r.chrome === false) {
+    return {
+      type: "SingleChildScrollView", key: scrollKey,
+      children: [{
+        type: "Column", gap: 4, crossAxisAlignment: "center",
+        children: pageNodes,
+      }],
+    };
+  }
   const body = [];
   if (pages.length) {
     body.push({
-      type: "SingleChildScrollView", key: "pages", flex: 1,
+      type: "SingleChildScrollView", key: scrollKey, flex: 1,
       children: [{
         type: "Column", gap: 4, crossAxisAlignment: "center",
-        children: pages.map((p, i) => pageNode(p, i)),
+        children: pageNodes,
       }],
     });
   } else {
@@ -466,6 +561,8 @@ async function readerTree(state) {
       { type: "ElevatedButton", labelText: hasNext ? "Siguiente" : "Último capítulo",
         labelTextEn: hasNext ? "Next" : "Last chapter",
         icon: "arrow_forward", onPressed: "nextChap", enabled: hasNext },
+      { type: "TextButton", labelText: "Pantalla completa", labelTextEn: "Full screen",
+        onPressed: { event: "toggleChrome" } },
       ch ? { type: "TextButton", labelText: "Ver en la web", labelTextEn: "Open on the web",
         onPressed: { go: { url: { href: ch.url } } } } : null,
     ].filter(Boolean),
@@ -548,6 +645,8 @@ export async function screenEvent(ev) {
   try {
     if (name === "open") {
       // primer evento reservado: al abrir la pantalla de detalle carga la obra
+      // y, de paso, se trae lo que los otros aparatos hayan guardado
+      syncPull();
       const r = ev.route || {};
       if (r.name === "detail") {
         const slug = routeSlug(r);
@@ -596,7 +695,13 @@ export async function screenEvent(ev) {
       if (i >= 0) f.splice(i, 1);
       else { f.unshift({ slug: d.slug, title: d.meta.title || d.slug, poster: d.meta.poster }); added = true; }
       setJson("favs", f);
+      syncPush("favs", f);
       return { toast: added ? "Añadida a favoritos" : "Quitada de favoritos" };
+    }
+    if (name === "toggleChrome") {
+      const r = state.reader;
+      if (!r) return null;
+      return { state: { reader: { ...r, chrome: r.chrome === false } } };
     }
     if (name === "read" || name === "nextChap" || name === "prevChap") {
       let chapters, idx, slug, title, poster;
@@ -624,7 +729,7 @@ export async function screenEvent(ev) {
       }
       if (!images.length) return { toast: "No se encontraron páginas en este capítulo." };
       markRead(slug, title, poster, ch.title, ch.url);
-      const reader = { slug, title, poster, chapters, idx, images };
+      const reader = { slug, title, poster, chapters, idx, images, chrome: true };
       if (name === "read") return { state: { reader }, route: { push: "read" } };
       return { state: { reader } };
     }

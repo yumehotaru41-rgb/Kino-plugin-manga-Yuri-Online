@@ -1,7 +1,7 @@
 {
   "id": "yuri-online",
   "name": "Yuri Online",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "apiVersion": 14,
   "entry": "plugin.js",
   "iconFile": "icon.png",
@@ -9,9 +9,10 @@
     "yuri-online.com"
   ],
   "capabilities": [
-    "screen"
+    "screen",
+    "shared"
   ],
-  "description": "Lee obras de yuri-online.com: actualizaciones, favoritos en portada, biblioteca, historial y lector webcómic vertical, en teléfono y TV. Contenido 18+ bloqueado por defecto.",
+  "description": "Lee obras de yuri-online.com: actualizaciones, biblioteca, favoritos, historial y lector webcómic vertical con pantalla completa y sincronización entre tus aparatos. Contenido 18+ bloqueado por defecto.",
   "screen": {
     "label": "Yuri Online",
     "labelEn": "Yuri Online",
