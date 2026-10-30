@@ -116,36 +116,39 @@ function labelValue(html, label) {
 }
 
 // Imágenes de un capítulo (servidas por el mismo dominio, /__img/…).
-// Devuelve { url, w, h }: el ancho/alto en píxeles que el sitio declara en
-// la etiqueta <img> (WordPress casi siempre lo incluye). Con él el lector
-// puede dimensionar la caja de cada página a su proporción real y evitar
-// el recorte cover del componente Image de Kino.
+// Devuelve { url, w, h }. El escaneo se hace sobre el HTML en bruto (no
+// solo etiquetas <img>: algunos temas cargan las páginas desde un script),
+// limitado al bloque de lectura cuando existe. Las dimensiones en píxeles
+// se buscan cerca de cada URL (width=/height= en la misma etiqueta).
 function readerImages(html) {
-  const out = [];
-  const seen = {};
-  const re = /<img\b[^>]*>/g;
-  let m;
-  while ((m = re.exec(html)) !== null) {
-    const tag = m[0];
-    const u = tag.match(/(?:data-src|src)="(https:\/\/yuri-online\.com\/__img\/[^"]+\.(?:jpe?g|png|webp|avif))"/);
-    if (!u || seen[u[1]]) continue;
-    seen[u[1]] = true;
-    const w = parseInt((tag.match(/\bwidth="(\d+)"/) || [])[1], 10) || 0;
-    const h = parseInt((tag.match(/\bheight="(\d+)"/) || [])[1], 10) || 0;
-    out.push({ url: u[1], w, h });
-  }
-  if (!out.length) {
-    const re2 = /<img\b[^>]*>/g;
-    while ((m = re2.exec(html)) !== null) {
-      const tag = m[0];
-      const u = tag.match(/(?:data-src|src)="(https:\/\/yuri-online\.com\/wp-content\/uploads\/[^"]+\.(?:jpe?g|png|webp))"/);
-      if (!u || seen[u[1]]) continue;
-      seen[u[1]] = true;
-      const w = parseInt((tag.match(/\bwidth="(\d+)"/) || [])[1], 10) || 0;
-      const h = parseInt((tag.match(/\bheight="(\d+)"/) || [])[1], 10) || 0;
-      out.push({ url: u[1], w, h });
+  // ventana de lectura: las páginas del capítulo viven aquí; así no se
+  // cuelan banners ni portadas de otras obras
+  let win = html;
+  const i = html.indexOf('class="reading-content"');
+  if (i >= 0) win = html.slice(i, i + 400000);
+  const dims = (at) => {
+    const w = parseInt((html.slice(Math.max(0, at - 300), at + 300).match(/\bwidth="(\d+)"/) || [])[1], 10) || 0;
+    const h = parseInt((html.slice(Math.max(0, at - 300), at + 300).match(/\bheight="(\d+)"/) || [])[1], 10) || 0;
+    return { w, h };
+  };
+  const collect = (winHtml, reSrc) => {
+    const out = [], seen = {};
+    const re = new RegExp(reSrc, "g");
+    let m;
+    while ((m = re.exec(winHtml)) !== null) {
+      if (seen[m[1]]) continue;
+      seen[m[1]] = true;
+      const d = dims(m.index + m[0].indexOf(m[1]));
+      out.push({ url: m[1], w: d.w, h: d.h });
     }
-  }
+    return out;
+  };
+  const IMG_RE = '(https:\\/\\/yuri-online\\.com\\/__img\\/[A-Za-z0-9_\\/.%-]+?\\.(?:jpe?g|png|webp|avif))';
+  let out = collect(win, IMG_RE);
+  if (!out.length) out = collect(win, '(https:\\/\\/yuri-online\\.com\\/wp-content\\/uploads\\/[^"\'\\s>]+?\\.(?:jpe?g|png|webp))');
+  // última carta: en toda la página (algunos temas referencian las páginas
+  // solo desde un script fuera del bloque de lectura)
+  if (!out.length) out = collect(html, IMG_RE);
   return out;
 }
 
@@ -346,7 +349,10 @@ async function homeBody(state) {
           onTap: { event: "goSearch" } },
         { type: "titleRail", key: "latest", title: "Últimas obras", titleEn: "Latest works",
           size: "small", done: true, items: items.map(kinoItem) },
-      ],
+        // favoritos siempre a mano, justo debajo de las últimas obras
+        favs().length ? { type: "titleRail", key: "favRail", title: "Mis favoritos", titleEn: "My favourites",
+          size: "small", done: true, items: favs().map(kinoItem) } : null,
+      ].filter(Boolean),
     }],
   };
 }
@@ -403,7 +409,7 @@ async function detailTree(state) {
             { type: "ElevatedButton", key: "latest", icon: "expand_more",
               labelText: "Leer lo último", labelTextEn: "Read latest",
               onPressed: { event: "read", arg: String(d.chapters.length - 1) } },
-            { type: "IconButton", key: "fav", icon: fav ? "heart" : "star",
+            { type: "ElevatedButton", key: "fav", icon: fav ? "heart" : "star",
               labelText: fav ? "Quitar de favoritos" : "Añadir a favoritos",
               labelTextEn: fav ? "Remove favourite" : "Add favourite",
               onPressed: "fav" },
