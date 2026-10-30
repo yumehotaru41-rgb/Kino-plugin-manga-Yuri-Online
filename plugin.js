@@ -1,3 +1,4 @@
+
 // Plugin de Kino para leer obras de yuri-online.com
 // Interfaz tipo lector de manga (Kototoro): Inicio, Biblioteca,
 // Favoritos, Historial, detalle de obra con lista completa de
@@ -274,6 +275,12 @@ async function homeBody(state) {
     type: "SingleChildScrollView", key: "home", flex: 1,
     children: [{
       type: "Column", children: [
+        // búsqueda siempre visible también desde Inicio (no solo la barra)
+        { type: "ListTile", key: "searchTile", leading: { type: "Icon", name: "search" },
+          title: "Buscar obra", titleEn: "Search a work",
+          subtitle: "Por título, p. ej. Trash Flower", subtitleEn: "By title, e.g. Trash Flower",
+          trailing: { type: "Icon", name: "arrow_forward" },
+          onTap: { event: "goSearch" } },
         { type: "titleRail", key: "latest", title: "Últimas obras", titleEn: "Latest works",
           size: "small", done: true, items: items.map(kinoItem) },
       ],
@@ -367,9 +374,12 @@ async function readerTree(state) {
     body.push({
       type: "SingleChildScrollView", key: "pages", flex: 1,
       children: [{
-        type: "Column", gap: 4, crossAxisAlignment: "stretch",
+        // Ancho fijo por tamaño: la caja toma la proporción propia de cada
+        // página y nunca se recorta (sin aspect, que siempre cover-corta).
+        type: "Column", gap: 4, crossAxisAlignment: "center",
         children: pages.map((u, i) => ({
-          type: "Image", key: "p" + i, url: u, fill: true,
+          type: "Image", key: "p" + i, url: u,
+          width: { compact: 400, medium: 480, expanded: 640 },
           alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
           fallback: { type: "Column", padding: 16, children: [
             { type: "Text", text: "Página " + (i + 1), textEn: "Page " + (i + 1), color: "muted" } ] },
