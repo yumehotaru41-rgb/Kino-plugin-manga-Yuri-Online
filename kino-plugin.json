@@ -1,11 +1,11 @@
 {
   "id": "yuri-online",
   "name": "Yuri Online",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "apiVersion": 14,
-  "description": "Lee obras de yuri-online.com: Inicio, Biblioteca, Favoritos, Historial y lector (cascada o paginado). Contenido 18+ bloqueado por defecto.",
   "entry": "plugin.js",
-  "iconFile": "icon.png",
+  "icon": "icon.png",
+  "description": "Lee obras de yuri-online.com: Inicio, Biblioteca, Favoritos, Historial y lector (cascada o paginado). Contenido 18+ bloqueado por defecto.",
   "hosts": [
     "yuri-online.com"
   ],
@@ -15,16 +15,14 @@
   "screen": {
     "label": "Yuri Online",
     "labelEn": "Yuri Online",
-    "iconFile": "icon.png",
-    "menuOpens": true,
-    "opensFrom": "app"
+    "icon": "list",
+    "menuOpens": "screen"
   },
   "settings": [
     {
       "key": "adulto",
-      "type": "toggle",
       "label": "Mostrar contenido 18+",
-      "labelEn": "Show 18+ content",
+      "type": "toggle",
       "default": false
     }
   ]
