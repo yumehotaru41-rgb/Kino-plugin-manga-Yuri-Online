@@ -115,22 +115,85 @@ function labelValue(html, label) {
   return m ? clean(m[1]) : "";
 }
 
-// Imágenes de un capítulo (servidas por el mismo dominio, /__img/…)
+// Imágenes de un capítulo (servidas por el mismo dominio, /__img/…).
+// Devuelve { url, w, h }: el ancho/alto en píxeles que el sitio declara en
+// la etiqueta <img> (WordPress casi siempre lo incluye). Con él el lector
+// puede dimensionar la caja de cada página a su proporción real y evitar
+// el recorte cover del componente Image de Kino.
 function readerImages(html) {
-  const urls = [];
+  const out = [];
   const seen = {};
-  const re = /https:\/\/yuri-online\.com\/__img\/[A-Za-z0-9_\/.-]+\.(?:jpe?g|png|webp|avif)/g;
+  const re = /<img\b[^>]*>/g;
   let m;
   while ((m = re.exec(html)) !== null) {
-    if (!seen[m[0]]) { seen[m[0]] = true; urls.push(m[0]); }
+    const tag = m[0];
+    const u = tag.match(/(?:data-src|src)="(https:\/\/yuri-online\.com\/__img\/[^"]+\.(?:jpe?g|png|webp|avif))"/);
+    if (!u || seen[u[1]]) continue;
+    seen[u[1]] = true;
+    const w = parseInt((tag.match(/\bwidth="(\d+)"/) || [])[1], 10) || 0;
+    const h = parseInt((tag.match(/\bheight="(\d+)"/) || [])[1], 10) || 0;
+    out.push({ url: u[1], w, h });
   }
-  if (!urls.length) {
-    const re2 = /data-src="(https:\/\/yuri-online\.com\/wp-content\/uploads\/[^"]+\.(?:jpe?g|png|webp))"/g;
+  if (!out.length) {
+    const re2 = /<img\b[^>]*>/g;
     while ((m = re2.exec(html)) !== null) {
-      if (!seen[m[1]]) { seen[m[1]] = true; urls.push(m[1]); }
+      const tag = m[0];
+      const u = tag.match(/(?:data-src|src)="(https:\/\/yuri-online\.com\/wp-content\/uploads\/[^"]+\.(?:jpe?g|png|webp))"/);
+      if (!u || seen[u[1]]) continue;
+      seen[u[1]] = true;
+      const w = parseInt((tag.match(/\bwidth="(\d+)"/) || [])[1], 10) || 0;
+      const h = parseInt((tag.match(/\bheight="(\d+)"/) || [])[1], 10) || 0;
+      out.push({ url: u[1], w, h });
     }
   }
-  return urls;
+  return out;
+}
+
+// Caja (dp) para una página de proporción r = alto/ancho: Kino solo acepta
+// tamaños de su escala, así que se busca el par ancho×alto de la escala cuya
+// proporción más se acerque a la real (recorte mínimo, a menudo cero).
+const SIZE_SCALE = [16, 24, 32, 40, 48, 64, 80, 96, 120, 160, 200, 240, 320, 400, 480, 560, 640];
+
+function pageBox(r, wCap, hCap) {
+  if (!isFinite(r) || r <= 0) return null;
+  for (const tol of [0.02, 0.05, 0.12, 0.25]) {
+    let best = null;
+    for (const w of SIZE_SCALE) {
+      if (w > wCap || w < 80) continue;
+      for (const h of SIZE_SCALE) {
+        if (h > hCap || h < 96) continue;
+        const err = Math.abs(h / w - r) / r;
+        if (err <= tol) {
+          const a = w * h;
+          if (!best || a > best.a || (a === best.a && err < best.err)) best = { w, h, a, err };
+        }
+      }
+    }
+    if (best) return { width: best.w, height: best.h };
+  }
+  return null;
+}
+
+function pageNode(p, i) {
+  const node = {
+    type: "Image", key: "p" + i, url: typeof p === "string" ? p : p.url,
+    alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
+    fallback: { type: "Column", padding: 16, children: [
+      { type: "Text", text: "Página " + (i + 1), textEn: "Page " + (i + 1), color: "muted" } ] },
+  };
+  const w = (p && p.w) || 0, h = (p && p.h) || 0;
+  if (w > 0 && h > 0) {
+    const small = pageBox(h / w, 400, 640), big = pageBox(h / w, 640, 640);
+    if (small && big) {
+      node.width = { compact: small.width, medium: small.width, expanded: big.width };
+      node.height = { compact: small.height, medium: small.height, expanded: big.height };
+      return node;
+    }
+  }
+  // sin dimensiones conocidas: caja de proporción de página típica
+  node.width = { compact: 400, medium: 400, expanded: 480 };
+  node.height = { compact: 560, medium: 560, expanded: 640 };
+  return node;
 }
 
 // Carga una obra: página de detalle + lista COMPLETA de capítulos.
@@ -313,9 +376,12 @@ async function detailTree(state) {
       { type: "Text", text: "Esta obra está marcada como contenido para adultos. Activa «Mostrar contenido 18+» en Ajustes ▸ Plugins ▸ Yuri Online para leerla.", textEn: "This work is marked adult. Turn on \"Show 18+ content\" in Settings ▸ Plugins ▸ Yuri Online to read it.", color: "muted" },
     ] };
   }
-  // Portada con la forma propia de la imagen y ancho acotado: nunca recortada
+  // Portada en caja 2:3 con ancho acotado: un póster casi siempre es 2:3,
+  // así la caja coincide con la imagen y no hay recorte (Image de Kino
+  // siempre rellena su caja recortando: sin caja exacta, siempre corta).
   const cover = d.meta.poster
-    ? { type: "Image", url: d.meta.poster, width: { compact: 120, expanded: 160 }, alt: d.meta.title,
+    ? { type: "Image", url: d.meta.poster, width: { compact: 120, expanded: 160 },
+        aspect: "2:3", alt: d.meta.title,
         fallback: { type: "Icon", name: "list" } }
     : { type: "Icon", name: "list" };
   const head = {
@@ -341,6 +407,9 @@ async function detailTree(state) {
               labelText: fav ? "Quitar de favoritos" : "Añadir a favoritos",
               labelTextEn: fav ? "Remove favourite" : "Add favourite",
               onPressed: "fav" },
+            { type: "TextButton", key: "web",
+              labelText: "Ver en la web", labelTextEn: "Open on the web",
+              onPressed: { go: { url: { href: BASE + "/manga/" + d.slug + "/" } } } },
           ],
         },
       ].filter(Boolean) },
@@ -360,8 +429,11 @@ async function detailTree(state) {
   return { type: "ListView", key: "detailBody", items };
 }
 
-// Lector webcómic: todas las páginas a lo ancho, una bajo la otra,
-// en un único scroll vertical (sin recortes, formato vertical).
+// Lector webcómic: las páginas una bajo la otra en un único scroll
+// vertical. Cada página va en una caja del mismo ancho×alto (en dp) que su
+// proporción real: el componente Image de Kino no tiene modo «ajustar»
+// (siempre rellena la caja recortando), así que la caja debe calzar con
+// la página para que se vea entera.
 async function readerTree(state) {
   const r = state.reader;
   if (!r) return loadingTree();
@@ -374,29 +446,23 @@ async function readerTree(state) {
     body.push({
       type: "SingleChildScrollView", key: "pages", flex: 1,
       children: [{
-        // Ancho fijo por tamaño: la caja toma la proporción propia de cada
-        // página y nunca se recorta (sin aspect, que siempre cover-corta).
         type: "Column", gap: 4, crossAxisAlignment: "center",
-        children: pages.map((u, i) => ({
-          type: "Image", key: "p" + i, url: u,
-          width: { compact: 400, medium: 480, expanded: 640 },
-          alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
-          fallback: { type: "Column", padding: 16, children: [
-            { type: "Text", text: "Página " + (i + 1), textEn: "Page " + (i + 1), color: "muted" } ] },
-        })),
+        children: pages.map((p, i) => pageNode(p, i)),
       }],
     });
   } else {
     body.push({ type: "Text", text: "Este capítulo no tiene páginas visibles.", textEn: "This chapter has no visible pages.", color: "muted", padding: 16 });
   }
   body.push({
-    type: "Row", gap: 12, padding: 16, mainAxisAlignment: "center", children: [
+    type: "Row", gap: 12, padding: 16, mainAxisAlignment: "center", wrap: true, children: [
       { type: "ElevatedButton", icon: "arrow_back", labelText: "Anterior", labelTextEn: "Previous",
         onPressed: "prevChap", enabled: hasPrev },
       { type: "ElevatedButton", labelText: hasNext ? "Siguiente" : "Último capítulo",
         labelTextEn: hasNext ? "Next" : "Last chapter",
         icon: "arrow_forward", onPressed: "nextChap", enabled: hasNext },
-    ],
+      ch ? { type: "TextButton", labelText: "Ver en la web", labelTextEn: "Open on the web",
+        onPressed: { go: { url: { href: ch.url } } } } : null,
+    ].filter(Boolean),
   });
   return {
     type: "Scaffold",
