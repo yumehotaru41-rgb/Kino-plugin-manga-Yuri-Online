@@ -11,12 +11,27 @@ const BASE = "https://yuri-online.com";
 
 // ---------------------------------------------------------------- red
 
-async function getHtml(path) {
-  const r = await kino.fetch(BASE + path, { headers: { Accept: "text/html" } });
-  if (!r.ok) throw kino.error("network", "HTTP " + r.status, {
-    userMessage: "No se pudo conectar con Yuri Online. Inténtalo de nuevo.",
+// La red a veces falla a la primera (bloqueos anti-bot, límites de
+// peticiones, conexiones cortadas): se reintenta y se envían cabeceras
+// de navegador. El último código HTTP viaja en el error para que el
+// aviso diga exactamente qué pasó.
+async function getHtml(path, tries) {
+  let last = 0;
+  for (let i = 0; i < (tries || 3); i++) {
+    let r;
+    try {
+      r = await kino.fetch(BASE + path, { headers: {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "es-ES,es;q=0.8,en;q=0.6",
+        "Referer": BASE + "/",
+      } });
+    } catch (e) { last = 0; continue; }
+    if (r.ok) return await r.text();
+    last = r.status;
+  }
+  throw kino.error("network", "HTTP " + last, {
+    userMessage: "No se pudo conectar con Yuri Online (HTTP " + last + "). Inténtalo de nuevo.",
   });
-  return r.text();
 }
 
 // ------------------------------------------------------------- scraping
@@ -666,7 +681,20 @@ export async function screenEvent(ev) {
       const ch = chapters[idx];
       let images = readerCache(ch.url);
       if (!images) {
-        const html = await getHtml(ch.url.replace(BASE, ""));
+        // respaldo: si falla la ruta relativa, se pide la URL absoluta
+        // tal cual aparece en el sitio (por si hay una redirección)
+        let html = "";
+        try {
+          html = await getHtml(ch.url.indexOf(BASE + "/") === 0 ? ch.url.slice(BASE.length) : ch.url);
+        } catch (e) {
+          const r = await kino.fetch(ch.url, { headers: {
+            "Accept": "text/html", "Referer": BASE + "/",
+          } });
+          if (!r.ok) throw kino.error("network", "HTTP " + r.status, {
+            userMessage: "No se pudo cargar el capítulo (HTTP " + r.status + ").",
+          });
+          html = await r.text();
+        }
         images = readerImages(html);
         if (images.length) readerCachePut(ch.url, images);
       }
@@ -686,7 +714,10 @@ export async function screenEvent(ev) {
                route: { push: "detail", params: { slug } } };
     }
   } catch (e) {
-    return { toast: "Algo falló: " + (e.code || "error") };
+    // el aviso lleva el código HTTP cuando es un fallo de red, para
+    // saber si el sitio bloquea la petición (403), no existe (404)…
+    const extra = e && e.message && e.code === "network" ? " " + e.message : "";
+    return { toast: "Algo falló: " + (e.code || "error") + extra, userMessage: e && e.userMessage };
   }
   return null;
 }
