@@ -440,10 +440,12 @@ async function detailTree(state) {
             (function () {
               const pg = progress()[d.slug];
               const ci = pg && typeof pg.url === "string" ? d.chapters.findIndex((c) => c.url === pg.url) : -1;
-              const contLabel = ("Continuar: " + (pg.chTitle || d.chapters[ci].title)).slice(0, 60);
-              if (ci > 0) return { type: "ElevatedButton", key: "cont", icon: "play",
-                labelText: contLabel, labelTextEn: contLabel,
-                onPressed: { event: "read", arg: String(ci) } };
+              if (ci > 0) {
+                const contLabel = ("Continuar: " + (pg.chTitle || d.chapters[ci].title)).slice(0, 60);
+                return { type: "ElevatedButton", key: "cont", icon: "play",
+                  labelText: contLabel, labelTextEn: contLabel,
+                  onPressed: { event: "read", arg: String(ci) } };
+              }
               return { type: "ElevatedButton", key: "start", icon: "play",
                 labelText: "Empezar a leer", labelTextEn: "Start reading",
                 onPressed: { event: "read", arg: "0" } };
