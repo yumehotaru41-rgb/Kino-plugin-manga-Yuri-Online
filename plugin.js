@@ -202,9 +202,7 @@ function pageBig(r) {
 // - compact (teléfono vertical): caja exacta a la proporción real (sin recorte)
 // - medium/expanded (TV, celular horizontal): página GRANDE a 640 de ancho
 //   con proporción 2:3 cuando la página es vertical — llena la pantalla
-// - zoom: página a 640 dentro de un scroll horizontal (Kino no tiene zoom de
-//   pellizco: se hace con Zoom + arrastre lateral)
-function pageNodes(p, i, zoom) {
+function pageNodes(p, i) {
   const img = {
     type: "Image", key: "p" + i, url: typeof p === "string" ? p : p.url,
     alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
@@ -214,14 +212,6 @@ function pageNodes(p, i, zoom) {
   const w = (p && p.w) || 0, h = (p && p.h) || 0;
   const ratio = w > 0 && h > 0 ? h / w : 0;
   const tall = ratio >= 1.05 && ratio <= 1.8;
-  if (zoom) {
-    if (tall) { img.width = 640; img.aspect = "2:3"; }
-    else {
-      const b = pageBox(ratio || 1.414, 640, 640) || { width: 480, height: 640 };
-      img.width = b.width; img.height = b.height;
-    }
-    return [{ type: "SingleChildScrollView", direction: "horizontal", key: "hz" + i, children: [img] }];
-  }
   if (ratio > 0 && tall) {
     const small = pageBox(ratio, 400, 640) || { width: 400, height: 560 };
     const compact = Object.assign({}, img, { key: "pc" + i, sizes: ["compact"],
@@ -555,10 +545,9 @@ async function readerTree(state) {
   // componente nuevo y arranca desde arriba (no hereda la posición anterior)
   const chKey = String(ch ? ch.url : r.idx).replace(/[^a-z0-9]/gi, "").slice(-16);
   const scrollKey = "pages-" + r.idx + "-" + chKey;
-  const zoom = r.zoom === true;
   const pageCol = {
     type: "Column", gap: 4, crossAxisAlignment: "center",
-    children: pages.flatMap((p, i) => pageNodes(p, i, zoom)),
+    children: pages.flatMap((p, i) => pageNodes(p, i)),
   };
   // modo inmersivo: solo las páginas a pantalla completa. Las imágenes de
   // Kino no reciben foco ni tap, así que el control es un botón flotante:
@@ -568,7 +557,6 @@ async function readerTree(state) {
       type: "Scaffold",
       floatingActionButton: {
         type: "FloatingActionButton", key: "fabShow", icon: "close",
-        labelText: "Mostrar controles", labelTextEn: "Show controls",
         onPressed: { event: "toggleChrome" },
       },
       body: { type: "SingleChildScrollView", key: scrollKey, children: [pageCol] },
@@ -588,9 +576,6 @@ async function readerTree(state) {
         icon: "arrow_forward", onPressed: "nextChap", enabled: hasNext },
       { type: "TextButton", labelText: "Pantalla completa", labelTextEn: "Full screen",
         onPressed: { event: "toggleChrome" } },
-      { type: "TextButton", labelText: zoom ? "Quitar zoom" : "Zoom",
-        labelTextEn: zoom ? "Stop zoom" : "Zoom",
-        onPressed: { event: "zoomToggle" } },
       ch ? { type: "TextButton", labelText: "Ver en la web", labelTextEn: "Open on the web",
         onPressed: { go: { url: { href: ch.url } } } } : null,
     ].filter(Boolean),
@@ -731,11 +716,6 @@ export async function screenEvent(ev) {
       if (!r) return null;
       return { state: { reader: { ...r, chrome: r.chrome === false } } };
     }
-    if (name === "zoomToggle") {
-      const r = state.reader;
-      if (!r) return null;
-      return { state: { reader: { ...r, zoom: !(r.zoom === true) } } };
-    }
     if (name === "read" || name === "nextChap" || name === "prevChap") {
       let chapters, idx, slug, title, poster;
       const prevReader = state.reader || {};
@@ -764,8 +744,7 @@ export async function screenEvent(ev) {
       if (!images.length) return { toast: "No se encontraron páginas en este capítulo." };
       markRead(slug, title, poster, ch.title, ch.url);
       const reader = { slug, title, poster, chapters, idx, images,
-        chrome: name === "read" ? true : prevReader.chrome !== false,
-        zoom: name === "read" ? false : prevReader.zoom === true };
+        chrome: name === "read" ? true : prevReader.chrome !== false };
       if (name === "read") return { state: { reader }, route: { push: "read" } };
       return { state: { reader } };
     }

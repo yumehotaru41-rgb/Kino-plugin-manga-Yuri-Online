@@ -4,15 +4,14 @@ Plugin de [Kino](https://kinotvapp.github.io/kino-plugins/) para leer obras de [
 
 ## Características
 
-- **Inicio**: fila «Últimas obras» y «Mis favoritos»; **Biblioteca**, **Favoritos** e **Historial** en pestañas.
-- **Detalle de obra**: portada completa (caja 2:3), estado, géneros, sinopsis y **lista completa de capítulos** por AJAX; botón **«Continuar»** donde lo dejaste.
+- **Inicio** («Últimas obras», «Mis favoritos»), **Biblioteca**, **Favoritos** e **Historial** en pestañas.
+- **Detalle de obra**: portada 2:3, estado, géneros, sinopsis, **lista completa de capítulos** por AJAX y botón **«Continuar»** donde lo dejaste.
 - **Lector webcómic vertical**:
-  - **Páginas grandes en TV y celular horizontal**: cada página se dibuja a 640 de ancho con proporción 2:3, centrada — llena la pantalla.
-  - En teléfono vertical la caja calza con la proporción real de cada página: **sin recortes**.
-  - **Pantalla completa (inmersivo)**: oculta todos los botones; queda solo un botón flotante (✕) para volver a mostrar los controles — enfocable con el control remoto (OK) y tocable en el teléfono.
-  - **Zoom**: botón «Zoom» que muestra cada página a 640 de ancho dentro de un desplazamiento horizontal — arrastra a los lados para leer los textos pequeños (Kino no tiene zoom de pellizco).
-  - Al cambiar de capítulo el lector arranca desde la primera página.
-- **Sincronización entre aparatos** (`shared`): favoritos y progreso entre teléfono y TV vinculados, validando lo recibido.
+  - **Páginas grandes en TV y celular horizontal** (640 de ancho, proporción 2:3, centradas); en teléfono vertical la caja calza con la proporción real: sin recortes.
+  - **Pantalla completa**: oculta todos los botones y deja solo un botón flotante **✕** (pequeño) para volver a mostrar los controles — enfocable con el control remoto (OK) y tocable en el teléfono.
+  - Al entrar o salir de pantalla completa el lector **conserva la posición** (mismo scroll, misma clave).
+  - Al cambiar de capítulo arranca desde la primera página.
+- **Sincronización entre aparatos** (`shared`): favoritos y progreso entre teléfono y TV vinculados.
 
 ## Contenido 18+
 
@@ -20,17 +19,21 @@ Las obras marcadas como adultas muestran un candado y **no se pueden leer por de
 
 ## Instalación
 
-Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.2.5**.
+Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.2.6**.
+
+## Cambios en 1.2.6
+
+- Quitado el botón **Zoom** (las páginas ya son grandes por sí solas).
+- El botón de salir de pantalla completa es solo la **✕** (pequeño, sin texto).
+- Al entrar y salir de pantalla completa **se conserva la posición de lectura** (mismo scroll y mismas páginas).
 
 ## Cambios en 1.2.5
 
-- **Páginas mucho más grandes en TV** (640 de ancho, proporción 2:3, centradas): llenan la pantalla en vez de quedar pequeñas con márgenes.
-- **Modo inmersivo arreglado**: el control remoto ya no se traba (las imágenes de Kino no reciben foco ni tap; ahora el control es un botón flotante enfocable y tocable).
-- **Zoom** con arrastre lateral para textos pequeños (en vez del pellizco, que el lienzo de Kino no soporta).
+- Páginas mucho más grandes en TV; modo inmersivo con botón flotante enfocable.
 
 ## Cambios en 1.2.4
 
-- Modo inmersivo, «Continuar» donde lo dejaste, cambio de capítulo desde arriba, sincronización `shared`, páginas más grandes.
+- Modo inmersivo, «Continuar», cambio de capítulo desde arriba, sincronización `shared`.
 
 ## Cambios anteriores
 
