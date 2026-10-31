@@ -2,6 +2,8 @@
 
 Plugin de [Kino](https://kinotvapp.github.io/kino-plugins/) para leer obras de [yuri-online.com](https://yuri-online.com/), con una interfaz de lector de manga tipo Kototoro.
 
+**Autor:** Hotaru Yume ([@hotaruyume](https://github.com/hotaruyume))
+
 ## Características
 
 - **Inicio** («Últimas obras», «Mis favoritos»), **Biblioteca**, **Favoritos** e **Historial** en pestañas.
@@ -9,8 +11,7 @@ Plugin de [Kino](https://kinotvapp.github.io/kino-plugins/) para leer obras de [
 - **Lector webcómic vertical**:
   - **Páginas grandes en TV y celular horizontal** (640 de ancho, proporción 2:3, centradas); en teléfono vertical la caja calza con la proporción real: sin recortes.
   - **Pantalla completa**: oculta todos los botones y deja solo un botón flotante **✕** (pequeño) para volver a mostrar los controles — enfocable con el control remoto (OK) y tocable en el teléfono.
-  - Al entrar o salir de pantalla completa el lector **conserva la posición** (mismo scroll, misma clave).
-  - Al cambiar de capítulo arranca desde la primera página.
+  - Al entrar o salir de pantalla completa el lector **conserva la posición**; al cambiar de capítulo arranca desde la primera página.
 - **Sincronización entre aparatos** (`shared`): favoritos y progreso entre teléfono y TV vinculados.
 
 ## Contenido 18+
@@ -19,13 +20,15 @@ Las obras marcadas como adultas muestran un candado y **no se pueden leer por de
 
 ## Instalación
 
-Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.2.6**.
+Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.2.7**.
+
+## Cambios en 1.2.7
+
+- Manifiesto con **autor** (Hotaru Yume) y campo de icono correcto (`icon`, no `iconFile`).
 
 ## Cambios en 1.2.6
 
-- Quitado el botón **Zoom** (las páginas ya son grandes por sí solas).
-- El botón de salir de pantalla completa es solo la **✕** (pequeño, sin texto).
-- Al entrar y salir de pantalla completa **se conserva la posición de lectura** (mismo scroll y mismas páginas).
+- Sin botón Zoom; ✕ pequeña para salir de pantalla completa; posición conservada al alternar.
 
 ## Cambios en 1.2.5
 

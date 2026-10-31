@@ -1,10 +1,12 @@
 {
   "id": "yuri-online",
   "name": "Yuri Online",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "apiVersion": 14,
   "entry": "plugin.js",
-  "iconFile": "icon.png",
+  "icon": "icon.png",
+  "author": "Hotaru Yume",
+  "creator": "hotaruyume",
   "hosts": [
     "yuri-online.com"
   ],
