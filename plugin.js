@@ -11,27 +11,12 @@ const BASE = "https://yuri-online.com";
 
 // ---------------------------------------------------------------- red
 
-// La red a veces falla a la primera (bloqueos anti-bot, límites de
-// peticiones, conexiones cortadas): se reintenta y se envían cabeceras
-// de navegador. El último código HTTP viaja en el error para que el
-// aviso diga exactamente qué pasó.
-async function getHtml(path, tries) {
-  let last = 0;
-  for (let i = 0; i < (tries || 3); i++) {
-    let r;
-    try {
-      r = await kino.fetch(BASE + path, { headers: {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "es-ES,es;q=0.8,en;q=0.6",
-        "Referer": BASE + "/",
-      } });
-    } catch (e) { last = 0; continue; }
-    if (r.ok) return await r.text();
-    last = r.status;
-  }
-  throw kino.error("network", "HTTP " + last, {
-    userMessage: "No se pudo conectar con Yuri Online (HTTP " + last + "). Inténtalo de nuevo.",
+async function getHtml(path) {
+  const r = await kino.fetch(BASE + path, { headers: { Accept: "text/html" } });
+  if (!r.ok) throw kino.error("network", "HTTP " + r.status, {
+    userMessage: "No se pudo conectar con Yuri Online. Inténtalo de nuevo.",
   });
+  return r.text();
 }
 
 // ------------------------------------------------------------- scraping
@@ -167,19 +152,86 @@ function readerImages(html) {
   return out;
 }
 
-// Cada página al ANCHO de la pantalla y con la proporción de la imagen
-// original: el Image de Kino recorta siempre que se le fija una caja o un
-// `aspect`, pero SIN caja su `aspect` por defecto es «la proporción de la
-// propia imagen». Con `fill: true` la caja toma todo el ancho disponible y
-// el alto sale de esa proporción real → página entera, sin recortes,
-// adaptada al ancho en teléfono y TV.
+// Caja (dp) para una página de proporción r = alto/ancho: Kino solo acepta
+// tamaños de su escala, así que se busca el par ancho×alto de la escala cuya
+// proporción más se acerque a la real (recorte mínimo, a menudo cero).
+const SIZE_SCALE = [16, 24, 32, 40, 48, 64, 80, 96, 120, 160, 200, 240, 320, 400, 480, 560, 640];
+
+function pageBox(r, wCap, hCap) {
+  if (!isFinite(r) || r <= 0) return null;
+  for (const tol of [0.02, 0.05, 0.12, 0.25]) {
+    let best = null;
+    for (const w of SIZE_SCALE) {
+      if (w > wCap || w < 80) continue;
+      for (const h of SIZE_SCALE) {
+        if (h > hCap || h < 96) continue;
+        const err = Math.abs(h / w - r) / r;
+        if (err <= tol) {
+          const a = w * h;
+          if (!best || a > best.a || (a === best.a && err < best.err)) best = { w, h, a, err };
+        }
+      }
+    }
+    if (best) return { width: best.w, height: best.h };
+  }
+  return null;
+}
+
+// Caja grande para ventanas medianas/anchas (celular horizontal, TV):
+// se prioriza el área (página grande, casi sin márgenes) aceptando una
+// tolerancia de proporción algo mayor (el recorte que causa es mínimo).
+function pageBig(r) {
+  if (!isFinite(r) || r <= 0) return null;
+  let best = null;
+  for (const w of SIZE_SCALE) {
+    if (w < 240 || w > 640) continue;
+    for (const h of SIZE_SCALE) {
+      if (h < 320 || h > 640) continue;
+      const err = Math.abs(h / w - r) / r;
+      if (err > 0.12) continue;
+      const a = w * h;
+      if (!best || a > best.a) best = { w, h, a };
+    }
+  }
+  return best ? { width: best.w, height: best.h } : null;
+}
+
+// Cajas por página (devuelve un array: en vertical grande son dos nodos,
+// uno por tamaño). El Image de Kino no tiene modo «ajustar»: siempre rellena
+// su caja recortando (cover) y los anchos altos son solo los de su escala.
+// - compact (teléfono vertical): caja exacta a la proporción real (sin recorte)
+// - medium/expanded (TV, celular horizontal): página GRANDE a 640 de ancho
+//   con proporción 2:3 cuando la página es vertical — llena la pantalla
 function pageNodes(p, i) {
-  return [{
+  const img = {
     type: "Image", key: "p" + i, url: typeof p === "string" ? p : p.url,
-    alt: "Página " + (i + 1), altEn: "Page " + (i + 1), fill: true,
+    alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
     fallback: { type: "Column", padding: 16, children: [
       { type: "Text", text: "Página " + (i + 1), textEn: "Page " + (i + 1), color: "muted" } ] },
-  }];
+  };
+  const w = (p && p.w) || 0, h = (p && p.h) || 0;
+  const ratio = w > 0 && h > 0 ? h / w : 0;
+  const tall = ratio >= 1.05 && ratio <= 1.8;
+  if (ratio > 0 && tall) {
+    const small = pageBox(ratio, 400, 640) || { width: 400, height: 560 };
+    const compact = Object.assign({}, img, { key: "pc" + i, sizes: ["compact"],
+      width: small.width, height: small.height });
+    const big = Object.assign({}, img, { key: "pe" + i, sizes: ["medium", "expanded"],
+      width: 640, aspect: "2:3" });
+    return [compact, big];
+  }
+  if (ratio > 0) {
+    const small = pageBox(ratio, 400, 640), big = pageBig(ratio) || pageBox(ratio, 640, 640);
+    if (small && big) {
+      img.width = { compact: small.width, medium: big.width, expanded: big.width };
+      img.height = { compact: small.height, medium: big.height, expanded: big.height };
+      return [img];
+    }
+  }
+  // sin dimensiones conocidas: caja de proporción de página típica
+  img.width = { compact: 400, medium: 400, expanded: 480 };
+  img.height = { compact: 560, medium: 560, expanded: 640 };
+  return [img];
 }
 
 // Carga una obra: página de detalle + lista COMPLETA de capítulos.
@@ -278,8 +330,7 @@ function syncPull() {
 }
 
 // caché de lector (últimos capítulos abiertos), para no volver a pedir
-function readerCache(url) { return getJson("rc:" + url, null); }
-function readerCachePut(url, images) {
+function readerCache(url) { return getJson("rc:" + url, null); }function readerCachePut(url, images) {
   try {
     const keys = kino.storage.keys().filter((k) => k.indexOf("rc:") === 0);
     if (keys.length > 4) for (const k of keys.slice(0, keys.length - 4)) kino.storage.remove(k);
@@ -440,12 +491,10 @@ async function detailTree(state) {
             (function () {
               const pg = progress()[d.slug];
               const ci = pg && typeof pg.url === "string" ? d.chapters.findIndex((c) => c.url === pg.url) : -1;
-              if (ci > 0) {
-                const contLabel = ("Continuar: " + (pg.chTitle || d.chapters[ci].title)).slice(0, 60);
-                return { type: "ElevatedButton", key: "cont", icon: "play",
-                  labelText: contLabel, labelTextEn: contLabel,
-                  onPressed: { event: "read", arg: String(ci) } };
-              }
+              const contLabel = ("Continuar: " + (pg.chTitle || d.chapters[ci].title)).slice(0, 60);
+              if (ci > 0) return { type: "ElevatedButton", key: "cont", icon: "play",
+                labelText: contLabel, labelTextEn: contLabel,
+                onPressed: { event: "read", arg: String(ci) } };
               return { type: "ElevatedButton", key: "start", icon: "play",
                 labelText: "Empezar a leer", labelTextEn: "Start reading",
                 onPressed: { event: "read", arg: "0" } };
@@ -479,6 +528,10 @@ async function detailTree(state) {
   return { type: "ListView", key: "detailBody", items };
 }
 
+// contador de navegación entre capítulos: cada visita tiene su propia
+// clave de scroll, así el lector siempre arranca en la primera página
+let navSeq = 0;
+
 // Lector webcómic: las páginas una bajo la otra en un único scroll
 // vertical. Cada página va en una caja del mismo ancho×alto (en dp) que su
 // proporción real: el componente Image de Kino no tiene modo «ajustar»
@@ -494,29 +547,13 @@ async function readerTree(state) {
   // clave única por capítulo: al cambiar de capítulo el scroll es un
   // componente nuevo y arranca desde arriba (no hereda la posición anterior)
   const chKey = String(ch ? ch.url : r.idx).replace(/[^a-z0-9]/gi, "").slice(-16);
-  const scrollKey = "pages-" + r.idx + "-" + chKey;
-  // «stretch»: cada página tan ancha como la columna (= ancho de pantalla).
-  // Sin «aspect», la caja de una Image toma la proporción de la propia
-  // imagen, así que la página se ve entera (cero recorte) y adaptada al
-  // ancho en teléfono y TV. Con «center» la imagen usaba su ancho
-  // natural en píxeles y se recortaba por los lados.
+  // clave única por visita (r.tk cambia en cada cambio de capítulo): el
+  // scroll siempre arranca desde la primera página
+  const scrollKey = "pages-" + r.idx + "-" + chKey + "-" + (r.tk || 0);
   const pageCol = {
-    type: "Column", gap: 4, crossAxisAlignment: "stretch",
+    type: "Column", gap: 4, crossAxisAlignment: "center",
     children: pages.flatMap((p, i) => pageNodes(p, i)),
   };
-  // modo inmersivo: solo las páginas a pantalla completa. Las imágenes de
-  // Kino no reciben foco ni tap, así que el control es un botón flotante:
-  // enfocable con el control remoto (OK lo activa) y tocable en el teléfono
-  if (r.chrome === false) {
-    return {
-      type: "Scaffold",
-      floatingActionButton: {
-        type: "FloatingActionButton", key: "fabShow", icon: "close",
-        onPressed: { event: "toggleChrome" },
-      },
-      body: { type: "SingleChildScrollView", key: scrollKey, children: [pageCol] },
-    };
-  }
   const body = [];
   body.push({
     type: "SingleChildScrollView", key: scrollKey, flex: 1,
@@ -529,7 +566,7 @@ async function readerTree(state) {
       { type: "ElevatedButton", labelText: hasNext ? "Siguiente" : "Último capítulo",
         labelTextEn: hasNext ? "Next" : "Last chapter",
         icon: "arrow_forward", onPressed: "nextChap", enabled: hasNext },
-    ].filter(Boolean),
+    ],
   });
   return {
     type: "Scaffold",
@@ -662,14 +699,8 @@ export async function screenEvent(ev) {
       syncPush("favs", f);
       return { toast: added ? "Añadida a favoritos" : "Quitada de favoritos" };
     }
-    if (name === "toggleChrome") {
-      const r = state.reader;
-      if (!r) return null;
-      return { state: { reader: { ...r, chrome: r.chrome === false } } };
-    }
     if (name === "read" || name === "nextChap" || name === "prevChap") {
       let chapters, idx, slug, title, poster;
-      const prevReader = state.reader || {};
       if (name === "read") {
         const d = state.detail;
         if (!d) return null;
@@ -688,27 +719,13 @@ export async function screenEvent(ev) {
       const ch = chapters[idx];
       let images = readerCache(ch.url);
       if (!images) {
-        // respaldo: si falla la ruta relativa, se pide la URL absoluta
-        // tal cual aparece en el sitio (por si hay una redirección)
-        let html = "";
-        try {
-          html = await getHtml(ch.url.indexOf(BASE + "/") === 0 ? ch.url.slice(BASE.length) : ch.url);
-        } catch (e) {
-          const r = await kino.fetch(ch.url, { headers: {
-            "Accept": "text/html", "Referer": BASE + "/",
-          } });
-          if (!r.ok) throw kino.error("network", "HTTP " + r.status, {
-            userMessage: "No se pudo cargar el capítulo (HTTP " + r.status + ").",
-          });
-          html = await r.text();
-        }
+        const html = await getHtml(ch.url.replace(BASE, ""));
         images = readerImages(html);
         if (images.length) readerCachePut(ch.url, images);
       }
       if (!images.length) return { toast: "No se encontraron páginas en este capítulo." };
       markRead(slug, title, poster, ch.title, ch.url);
-      const reader = { slug, title, poster, chapters, idx, images,
-        chrome: name === "read" ? true : prevReader.chrome !== false };
+      const reader = { slug, title, poster, chapters, idx, images, tk: ++navSeq };
       if (name === "read") return { state: { reader }, route: { push: "read" } };
       return { state: { reader } };
     }
@@ -721,10 +738,7 @@ export async function screenEvent(ev) {
                route: { push: "detail", params: { slug } } };
     }
   } catch (e) {
-    // el aviso lleva el código HTTP cuando es un fallo de red, para
-    // saber si el sitio bloquea la petición (403), no existe (404)…
-    const extra = e && e.message && e.code === "network" ? " " + e.message : "";
-    return { toast: "Algo falló: " + (e.code || "error") + extra, userMessage: e && e.userMessage };
+    return { toast: "Algo falló: " + (e.code || "error") };
   }
   return null;
 }
