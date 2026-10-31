@@ -495,8 +495,13 @@ async function readerTree(state) {
   // componente nuevo y arranca desde arriba (no hereda la posición anterior)
   const chKey = String(ch ? ch.url : r.idx).replace(/[^a-z0-9]/gi, "").slice(-16);
   const scrollKey = "pages-" + r.idx + "-" + chKey;
+  // «stretch»: cada página tan ancha como la columna (= ancho de pantalla).
+  // Sin «aspect», la caja de una Image toma la proporción de la propia
+  // imagen, así que la página se ve entera (cero recorte) y adaptada al
+  // ancho en teléfono y TV. Con «center» la imagen usaba su ancho
+  // natural en píxeles y se recortaba por los lados.
   const pageCol = {
-    type: "Column", gap: 4, crossAxisAlignment: "center",
+    type: "Column", gap: 4, crossAxisAlignment: "stretch",
     children: pages.flatMap((p, i) => pageNodes(p, i)),
   };
   // modo inmersivo: solo las páginas a pantalla completa. Las imágenes de
