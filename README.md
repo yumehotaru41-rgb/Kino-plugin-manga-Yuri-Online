@@ -14,17 +14,25 @@ Plugin de [Kino](https://kinotvapp.github.io/kino-plugins/) para leer obras de [
   - Al entrar o salir de pantalla completa el lector **conserva la posición**; al cambiar de capítulo arranca desde la primera página.
 - **Sincronización entre aparatos** (`shared`): favoritos y progreso entre teléfono y TV vinculados.
 
+## Icono
+
+El icono de pantalla (`screen.iconFile`) exige **PNG de 96×96 px, fondo transparente y máximo 24 KB**; uno que no cumpla hace que Kino rechace la instalación/actualización. Por ahora el plugin usa el icono por defecto de Kino. Para poner el propio: exporta tu dibujo a 96×96 px **con fondo transparente**, súbelo como `icon.png` al repo y vuelve a añadir `"iconFile": "icon.png"` en el bloque `screen` del manifiesto.
+
 ## Contenido 18+
 
 Las obras marcadas como adultas muestran un candado y **no se pueden leer por defecto**. Desbloqueo: **Ajustes ▸ Plugins ▸ Yuri Online ▸ Mostrar contenido 18+**.
 
 ## Instalación
 
-Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.2.7**.
+Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.2.8**.
+
+## Cambios en 1.2.8
+
+- Sin `iconFile` de pantalla mientras el PNG no cumpla (96×96, transparente, ≤24 KB): la actualización ya no se rechaza; Kino usa su icono por defecto.
 
 ## Cambios en 1.2.7
 
-- Manifiesto con **autor** (Hotaru Yume) y campo de icono correcto (`icon`, no `iconFile`).
+- Manifiesto con **autor** (Hotaru Yume) y campo de icono raíz correcto (`icon`).
 
 ## Cambios en 1.2.6
 
