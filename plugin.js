@@ -152,86 +152,19 @@ function readerImages(html) {
   return out;
 }
 
-// Caja (dp) para una página de proporción r = alto/ancho: Kino solo acepta
-// tamaños de su escala, así que se busca el par ancho×alto de la escala cuya
-// proporción más se acerque a la real (recorte mínimo, a menudo cero).
-const SIZE_SCALE = [16, 24, 32, 40, 48, 64, 80, 96, 120, 160, 200, 240, 320, 400, 480, 560, 640];
-
-function pageBox(r, wCap, hCap) {
-  if (!isFinite(r) || r <= 0) return null;
-  for (const tol of [0.02, 0.05, 0.12, 0.25]) {
-    let best = null;
-    for (const w of SIZE_SCALE) {
-      if (w > wCap || w < 80) continue;
-      for (const h of SIZE_SCALE) {
-        if (h > hCap || h < 96) continue;
-        const err = Math.abs(h / w - r) / r;
-        if (err <= tol) {
-          const a = w * h;
-          if (!best || a > best.a || (a === best.a && err < best.err)) best = { w, h, a, err };
-        }
-      }
-    }
-    if (best) return { width: best.w, height: best.h };
-  }
-  return null;
-}
-
-// Caja grande para ventanas medianas/anchas (celular horizontal, TV):
-// se prioriza el área (página grande, casi sin márgenes) aceptando una
-// tolerancia de proporción algo mayor (el recorte que causa es mínimo).
-function pageBig(r) {
-  if (!isFinite(r) || r <= 0) return null;
-  let best = null;
-  for (const w of SIZE_SCALE) {
-    if (w < 240 || w > 640) continue;
-    for (const h of SIZE_SCALE) {
-      if (h < 320 || h > 640) continue;
-      const err = Math.abs(h / w - r) / r;
-      if (err > 0.12) continue;
-      const a = w * h;
-      if (!best || a > best.a) best = { w, h, a };
-    }
-  }
-  return best ? { width: best.w, height: best.h } : null;
-}
-
-// Cajas por página (devuelve un array: en vertical grande son dos nodos,
-// uno por tamaño). El Image de Kino no tiene modo «ajustar»: siempre rellena
-// su caja recortando (cover) y los anchos altos son solo los de su escala.
-// - compact (teléfono vertical): caja exacta a la proporción real (sin recorte)
-// - medium/expanded (TV, celular horizontal): página GRANDE a 640 de ancho
-//   con proporción 2:3 cuando la página es vertical — llena la pantalla
+// Cada página al ANCHO de la pantalla y con la proporción de la imagen
+// original: el Image de Kino recorta siempre que se le fija una caja o un
+// `aspect`, pero SIN caja su `aspect` por defecto es «la proporción de la
+// propia imagen». Con `fill: true` la caja toma todo el ancho disponible y
+// el alto sale de esa proporción real → página entera, sin recortes,
+// adaptada al ancho en teléfono y TV.
 function pageNodes(p, i) {
-  const img = {
+  return [{
     type: "Image", key: "p" + i, url: typeof p === "string" ? p : p.url,
-    alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
+    alt: "Página " + (i + 1), altEn: "Page " + (i + 1), fill: true,
     fallback: { type: "Column", padding: 16, children: [
       { type: "Text", text: "Página " + (i + 1), textEn: "Page " + (i + 1), color: "muted" } ] },
-  };
-  const w = (p && p.w) || 0, h = (p && p.h) || 0;
-  const ratio = w > 0 && h > 0 ? h / w : 0;
-  const tall = ratio >= 1.05 && ratio <= 1.8;
-  if (ratio > 0 && tall) {
-    const small = pageBox(ratio, 400, 640) || { width: 400, height: 560 };
-    const compact = Object.assign({}, img, { key: "pc" + i, sizes: ["compact"],
-      width: small.width, height: small.height });
-    const big = Object.assign({}, img, { key: "pe" + i, sizes: ["medium", "expanded"],
-      width: 640, aspect: "2:3" });
-    return [compact, big];
-  }
-  if (ratio > 0) {
-    const small = pageBox(ratio, 400, 640), big = pageBig(ratio) || pageBox(ratio, 640, 640);
-    if (small && big) {
-      img.width = { compact: small.width, medium: big.width, expanded: big.width };
-      img.height = { compact: small.height, medium: big.height, expanded: big.height };
-      return [img];
-    }
-  }
-  // sin dimensiones conocidas: caja de proporción de página típica
-  img.width = { compact: 400, medium: 400, expanded: 480 };
-  img.height = { compact: 560, medium: 560, expanded: 640 };
-  return [img];
+  }];
 }
 
 // Carga una obra: página de detalle + lista COMPLETA de capítulos.

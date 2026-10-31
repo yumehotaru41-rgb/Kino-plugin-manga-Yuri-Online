@@ -9,14 +9,10 @@ Plugin de [Kino](https://kinotvapp.github.io/kino-plugins/) para leer obras de [
 - **Inicio** («Últimas obras», «Mis favoritos»), **Biblioteca**, **Favoritos** e **Historial** en pestañas.
 - **Detalle de obra**: portada 2:3, estado, géneros, sinopsis, **lista completa de capítulos** por AJAX, botón **«Continuar»** donde lo dejaste y «Ver en la web».
 - **Lector webcómic vertical**:
-  - **Páginas grandes en TV y celular horizontal** (640 de ancho, proporción 2:3, centradas); en teléfono vertical la caja calza con la proporción real: sin recortes.
-  - Fila de botones limpia: **Anterior / Siguiente**.
+  - **Cada página a ancho completo de la pantalla, con su proporción original: sin recortes.** Kino usa la proporción de la propia imagen cuando no se fija ninguna caja.
+  - Fila de botones limpia: **Anterior / Siguiente**; modo inmersivo con ✕ flotante para volver.
   - Al cambiar de capítulo arranca desde la primera página.
 - **Sincronización entre aparatos** (`shared`): favoritos y progreso entre teléfono y TV vinculados.
-
-## Icono
-
-El icono de pantalla (`screen.iconFile`) exige **PNG de 96×96 px, fondo transparente y máximo 24 KB**; uno que no cumpla hace que Kino rechace la instalación/actualización. Por ahora el plugin usa el icono por defecto de Kino. Para poner el propio: exporta tu dibujo a 96×96 px **con fondo transparente**, súbelo como `icon.png` al repo y vuelve a añadir `"iconFile": "icon.png"` en el bloque `screen` del manifiesto.
 
 ## Contenido 18+
 
@@ -24,7 +20,11 @@ Las obras marcadas como adultas muestran un candado y **no se pueden leer por de
 
 ## Instalación
 
-Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.2.9**.
+Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.3.0**.
+
+## Cambios en 1.3.0
+
+- **Páginas sin recortes**: cada página se pinta con su tamaño original de proporción, adaptada al ancho de la pantalla (teléfono y TV). Se eliminaron las cajas de proporción fija que provocaban recortes.
 
 ## Cambios en 1.2.9
 
