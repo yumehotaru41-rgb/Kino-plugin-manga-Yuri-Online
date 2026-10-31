@@ -574,10 +574,6 @@ async function readerTree(state) {
       { type: "ElevatedButton", labelText: hasNext ? "Siguiente" : "Último capítulo",
         labelTextEn: hasNext ? "Next" : "Last chapter",
         icon: "arrow_forward", onPressed: "nextChap", enabled: hasNext },
-      { type: "TextButton", labelText: "Pantalla completa", labelTextEn: "Full screen",
-        onPressed: { event: "toggleChrome" } },
-      ch ? { type: "TextButton", labelText: "Ver en la web", labelTextEn: "Open on the web",
-        onPressed: { go: { url: { href: ch.url } } } } : null,
     ].filter(Boolean),
   });
   return {
