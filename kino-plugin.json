@@ -3,7 +3,7 @@
   "name": "Yuri Online",
   "author": "Hotaru Yume",
   "creator": "hotaruyume",
-  "version": "1.2.9",
+  "version": "1.3.0",
   "apiVersion": 14,
   "entry": "plugin.js",
   "hosts": [
@@ -13,7 +13,7 @@
     "screen",
     "shared"
   ],
-  "description": "Lee obras de yuri-online.com: lector webcómic vertical limpio (solo Anterior/Siguiente) con páginas grandes en TV, favoritos y progreso sincronizados entre tus aparatos. Contenido 18+ bloqueado por defecto.",
+  "description": "Lee obras de yuri-online.com: lector webcómic vertical limpio (solo Anterior/Siguiente) con páginas grandes en TV, favoritos y progreso sincronizados entre tus aparatos. Las obras adultas llevan un aviso 18+ en su portada.",
   "screen": {
     "label": "Yuri Online",
     "labelEn": "Yuri Online",
@@ -22,14 +22,5 @@
       "menu",
       "settings"
     ]
-  },
-  "settings": [
-    {
-      "key": "adulto",
-      "type": "toggle",
-      "label": "Mostrar contenido 18+",
-      "labelEn": "Show 18+ content",
-      "default": false
-    }
-  ]
+  }
 }

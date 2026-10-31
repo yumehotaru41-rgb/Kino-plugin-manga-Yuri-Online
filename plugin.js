@@ -86,10 +86,7 @@ function natCmp(a, b) {
   return 0;
 }
 
-// Contenido 18+: el ajuste del plugin lo desbloquea (desactivado por defecto)
-function adultAllowed() {
-  try { return kino.config.get("adulto") === true; } catch (e) { return false; }
-}
+// Contenido 18+: sin bloqueo; solo se marca la portada con un aviso pequeño
 
 // Metadatos de la página de una obra
 function seriesMeta(html) {
@@ -348,13 +345,15 @@ const TABS = [
 ];
 
 // Una obra como tarjeta nativa de Kino (titleGrid/titleRail).
-// El toque abre esta misma pantalla en la ruta "detail" con el slug;
-// el evento reservado "open" carga los datos al llegar ahí.
+// El toque manda el evento "openSeries", que CARGA la obra y la entra como
+// ruta EMPUJADA (route: { push: "detail" }): así el botón Atrás de Kino
+// retrocede de verdad (detalle -> pestañas) en vez de cerrar el lienzo,
+// porque con open: { screen } la ruta de detalle se volvía raíz.
 function kinoItem(it) {
   const item = {
     id: "yuri-" + it.slug, ref: it.slug,
     title: it.title, kind: "movie",
-    open: { screen: { route: "detail", args: { slug: it.slug } } },
+    onTap: { event: "openSeries", arg: it.slug },
   };
   if (it.poster) item.poster = it.poster;
   return item;
@@ -460,19 +459,12 @@ async function detailTree(state) {
   const d = state.detail;
   if (!d) return loadingTree();
   const fav = isFav(d.slug);
-  if (d.meta && d.meta.adult && !adultAllowed()) {
-    return { type: "Column", padding: 16, gap: 8, children: [
-      { type: "Icon", name: "lock", color: "muted" },
-      { type: "Text", text: "Contenido 18+", textEn: "18+ content", style: "h3" },
-      { type: "Text", text: "Esta obra está marcada como contenido para adultos. Activa «Mostrar contenido 18+» en Ajustes ▸ Plugins ▸ Yuri Online para leerla.", textEn: "This work is marked adult. Turn on \"Show 18+ content\" in Settings ▸ Plugins ▸ Yuri Online to read it.", color: "muted" },
-    ] };
-  }
   if (!Array.isArray(d.chapters) || !d.chapters.length) {
     return { type: "Column", padding: 32, gap: 12, crossAxisAlignment: "center", children: [
       { type: "Icon", name: "error", color: "muted" },
       { type: "Text", text: "No se encontraron capítulos para esta obra.", textEn: "No chapters found for this work.", color: "muted" },
       { type: "ElevatedButton", icon: "arrow_back", labelText: "Volver", labelTextEn: "Back",
-        onPressed: { go: { screen: { route: "main" } } } },
+        onPressed: { event: "popBack" } },
     ] };
   }
   // Portada en caja 2:3 con ancho acotado: un póster casi siempre es 2:3,
@@ -532,18 +524,16 @@ async function detailTree(state) {
       trailing: { type: "Icon", name: "arrow_forward" },
     });
   }
-  // El detalle llega de dos maneras: como raíz (la tarjeta de una obra usa
-  // open: { screen }, que reabre el lienzo en esta ruta) o empujado desde
-  // Historial. En ambos casos el botón Atrás del AppBar vuelve a las pestañas
-  // (go.screen reabre el lienzo en "main" conservando el estado); el Atrás
-  // físico de Kino también saca una ruta empujada antes de cerrar.
+  // El detalle siempre llega como ruta empujada (desde una tarjeta, Historial
+  // o búsqueda); Atrás (el de Kino o el del AppBar) saca esa ruta y vuelve a
+  // las pestañas con su estado.
   return {
     type: "Scaffold",
     appBar: {
       title: d.meta.title || d.slug,
       leading: { type: "IconButton", key: "backHome", icon: "arrow_back",
         labelText: "Atrás", labelTextEn: "Back",
-        onPressed: { go: { screen: { route: "main" } } } },
+        onPressed: { event: "popBack" } },
       actions: [],
     },
     body: { type: "ListView", key: "detailBody", items },
@@ -571,7 +561,7 @@ async function readerTree(state) {
       { type: "Icon", name: "error", color: "muted" },
       { type: "Text", text: "No se pudieron cargar las páginas de este capítulo.", textEn: "Could not load this chapter's pages.", color: "muted" },
       { type: "ElevatedButton", icon: "arrow_back", labelText: "Volver", labelTextEn: "Back",
-        onPressed: { go: { screen: { route: "detail", args: { slug: r.slug } } } } },
+        onPressed: { event: "popBack" } },
     ] };
   }
   const hasNext = r.idx + 1 < chapters.length;
@@ -602,7 +592,11 @@ async function readerTree(state) {
   });
   return {
     type: "Scaffold",
-    appBar: { title: ch ? ch.title : "Leyendo", actions: [] },
+    appBar: { title: ch ? ch.title : "Leyendo",
+      leading: { type: "IconButton", key: "backFromReader", icon: "arrow_back",
+        labelText: "Atrás", labelTextEn: "Back",
+        onPressed: { event: "popBack" } },
+      actions: [] },
     body: { type: "Column", children: body },
   };
 }
@@ -707,6 +701,7 @@ export async function screenEvent(ev) {
       return { state: { libItems: merged, libPage: page, libDone: more.length < 12 } };
     }
     if (name === "goSearch") return { route: { push: "search" } };
+    if (name === "popBack") return { route: { pop: true } };
     if (name === "search") {
       const q = String(ev.value && ev.value.q || "").trim();
       if (!q) return { toast: "Escribe un título." };
@@ -736,7 +731,6 @@ export async function screenEvent(ev) {
       if (name === "read") {
         const d = state.detail;
         if (!d) return null;
-        if (d.meta && d.meta.adult && !adultAllowed()) return null;
         chapters = d.chapters;
         idx = parseInt(String(ev.arg || "0"), 10) || 0;
         slug = d.slug; title = d.meta.title; poster = d.meta.poster;
