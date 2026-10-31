@@ -1,6 +1,6 @@
 # Kino Plugin — Yuri Online
 
-Plugin de [Kino](https://kinotvapp.github.io/kino-plugins/) para leer obras de [yuri-online.com](https://yuri-online.com/).
+Plugin de [Kino](https://kinotvvapp.github.io/kino-plugins/) para leer obras de [yuri-online.com](https://yuri-online.com/).
 
 - **Autor**: Hotaru Yume (`hotaruyume`)
 - **Inicio** (últimas obras + favoritos), **Biblioteca**, **Favoritos** e **Historial**.
@@ -14,15 +14,15 @@ Las obras marcadas como adultas muestran un candado y **no se pueden leer por de
 
 ## Instalación
 
-Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.2.7**.
+Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.2.8**.
 
-## Cambios en 1.2.7
+## Cambios en 1.2.8
 
-- **Ícono conforme a Kino**: PNG de 96×96 px con fondo transparente (antes 256×256, lo que bloqueaba la instalación).
-- Nuevos campos `author` y `creator` en el manifiesto.
+- **Sin ícono**: se quitaron `iconFile` del manifiesto y `icon.png` del repo (Kino validaba el PNG de 96×96 y seguía rechazando la instalación; sin ícono usa el ícono por defecto y la instalación pasa).
 
 ## Cambios anteriores
 
+- **1.2.7**: ícono 96×96 generado; campos `author` y `creator`.
 - **1.2.6**: lector limpio (solo «Anterior»/«Siguiente»); cada capítulo empieza desde arriba.
 - **1.2.5**: páginas grandes en TV; modo zoom.
 - **1.2.4**: «Continuar», sincronización `shared`.

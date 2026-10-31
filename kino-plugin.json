@@ -3,10 +3,9 @@
   "name": "Yuri Online",
   "author": "Hotaru Yume",
   "creator": "hotaruyume",
-  "version": "1.2.7",
+  "version": "1.2.8",
   "apiVersion": 14,
   "entry": "plugin.js",
-  "iconFile": "icon.png",
   "hosts": [
     "yuri-online.com"
   ],
@@ -18,7 +17,6 @@
   "screen": {
     "label": "Yuri Online",
     "labelEn": "Yuri Online",
-    "iconFile": "icon.png",
     "menuOpens": "screen",
     "opensFrom": [
       "menu",
