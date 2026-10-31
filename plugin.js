@@ -344,19 +344,29 @@ const TABS = [
   { value: "historial", label: "Historial", labelEn: "History" },
 ];
 
-// Una obra como tarjeta nativa de Kino (titleGrid/titleRail).
-// El toque manda el evento "openSeries", que CARGA la obra y la entra como
-// ruta EMPUJADA (route: { push: "detail" }): así el botón Atrás de Kino
-// retrocede de verdad (detalle -> pestañas) en vez de cerrar el lienzo,
-// porque con open: { screen } la ruta de detalle se volvía raíz.
-function kinoItem(it) {
-  const item = {
-    id: "yuri-" + it.slug, ref: it.slug,
-    title: it.title, kind: "movie",
-    onTap: { event: "openSeries", arg: it.slug },
+// Una obra como tarjeta PROPIA (Card + Image), nunca un KinoItem: los
+// ítems de Kino son títulos de su catálogo de video (kind: "movie") y su
+// toque abría la obra como película en vez de mandarla al lector. El toque
+// de esta tarjeta manda el evento "openSeries", que CARGA la obra y la
+// entra como ruta EMPUJADA (route: { push: "detail" }): así el botón Atrás
+// de Kino retrocede de verdad (detalle -> pestañas) en vez de cerrar el
+// lienzo. En un riel horizontal la imagen lleva ancho fijo.
+function posterCard(it, prefix, rail) {
+  const img = {
+    type: "Image", url: it.poster || "", aspect: "2:3",
+    alt: it.title, altEn: it.title,
+    fallback: { type: "Column", padding: 16, crossAxisAlignment: "center", children: [
+      { type: "Icon", name: "list", color: "muted" } ] },
   };
-  if (it.poster) item.poster = it.poster;
-  return item;
+  if (rail) img.width = 120;
+  return {
+    type: "Card", key: prefix + it.slug, flush: true,
+    onTap: { event: "openSeries", arg: it.slug },
+    children: [
+      img,
+      { type: "Text", text: it.title, textEn: it.title, style: "caption", maxLines: 2, padding: 8 },
+    ],
+  };
 }
 
 const EMPTY_LIB = { type: "emptyState", icon: "list", title: "Nada por aquí todavía.", titleEn: "Nothing here yet." };
@@ -364,18 +374,20 @@ const EMPTY_FAV = { type: "emptyState", icon: "heart", title: "Marca obras con e
 
 function titleGridOf(items, eventMore, loading, done, emptyNode) {
   if (!items || !items.length) return emptyNode || EMPTY_LIB;
-  const grid = {
-    type: "titleGrid", key: "grid",
+  // ListView con columns: rejilla perezosa (onEndReached para paginar) sin
+  // los KinoItem de video de titleGrid
+  const list = {
+    type: "ListView", key: "grid",
     columns: { compact: 3, medium: 4, expanded: 6 },
-    items: items.map(kinoItem),
+    items: items.map((it) => posterCard(it, "c-")),
   };
   if (eventMore && !done) {
-    grid.onEndReached = { event: eventMore };
-    grid.loadingMore = loading === true;
+    list.onEndReached = { event: eventMore };
+    list.loadingMore = loading === true;
   } else {
-    grid.done = true;
+    list.done = true;
   }
-  return grid;
+  return list;
 }
 
 function historyList() {
@@ -421,6 +433,13 @@ async function homeBody(state) {
     items = seriesCards(html, 30);
   }
   if (!items.length) return EMPTY_LIB;
+  // riel horizontal de tarjetas propias (sin titleRail: sus items son
+  // títulos de video de Kino)
+  const rail = (title, titleEn, key, list) => list.length ? [
+    { type: "Text", text: title, textEn: titleEn, style: "h3", padding: 16 },
+    { type: "SingleChildScrollView", key: key, direction: "horizontal", padding: 16,
+      children: [{ type: "Row", gap: 8, children: list.slice(0, 60).map((it) => posterCard(it, key + "-", true)) }] },
+  ] : [];
   return {
     type: "SingleChildScrollView", key: "home", flex: 1,
     children: [{
@@ -431,12 +450,9 @@ async function homeBody(state) {
           subtitle: "Por título, p. ej. Trash Flower", subtitleEn: "By title, e.g. Trash Flower",
           trailing: { type: "Icon", name: "arrow_forward" },
           onTap: { event: "goSearch" } },
-        { type: "titleRail", key: "latest", title: "Últimas obras", titleEn: "Latest works",
-          size: "small", done: true, items: items.map(kinoItem) },
-        // favoritos siempre a mano, justo debajo de las últimas obras
-        favs().length ? { type: "titleRail", key: "favRail", title: "Mis favoritos", titleEn: "My favourites",
-          size: "small", done: true, items: favs().map(kinoItem) } : null,
-      ].filter(Boolean),
+      // favoritos siempre a mano, debajo de las últimas obras
+      ].concat(rail("Últimas obras", "Latest works", "latest", items))
+        .concat(rail("Mis favoritos", "My favourites", "favs", favs())),
     }],
   };
 }
