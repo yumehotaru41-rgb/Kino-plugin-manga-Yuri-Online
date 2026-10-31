@@ -467,6 +467,14 @@ async function detailTree(state) {
       { type: "Text", text: "Esta obra está marcada como contenido para adultos. Activa «Mostrar contenido 18+» en Ajustes ▸ Plugins ▸ Yuri Online para leerla.", textEn: "This work is marked adult. Turn on \"Show 18+ content\" in Settings ▸ Plugins ▸ Yuri Online to read it.", color: "muted" },
     ] };
   }
+  if (!Array.isArray(d.chapters) || !d.chapters.length) {
+    return { type: "Column", padding: 32, gap: 12, crossAxisAlignment: "center", children: [
+      { type: "Icon", name: "error", color: "muted" },
+      { type: "Text", text: "No se encontraron capítulos para esta obra.", textEn: "No chapters found for this work.", color: "muted" },
+      { type: "ElevatedButton", icon: "arrow_back", labelText: "Volver", labelTextEn: "Back",
+        onPressed: { go: { screen: { route: "main" } } } },
+    ] };
+  }
   // Portada en caja 2:3 con ancho acotado: un póster casi siempre es 2:3,
   // así la caja coincide con la imagen y no hay recorte (Image de Kino
   // siempre rellena su caja recortando: sin caja exacta, siempre corta).
@@ -491,10 +499,12 @@ async function detailTree(state) {
             (function () {
               const pg = progress()[d.slug];
               const ci = pg && typeof pg.url === "string" ? d.chapters.findIndex((c) => c.url === pg.url) : -1;
-              const contLabel = ("Continuar: " + (pg.chTitle || d.chapters[ci].title)).slice(0, 60);
-              if (ci > 0) return { type: "ElevatedButton", key: "cont", icon: "play",
-                labelText: contLabel, labelTextEn: contLabel,
-                onPressed: { event: "read", arg: String(ci) } };
+              if (ci > 0) {
+                const contLabel = ("Continuar: " + (pg.chTitle || d.chapters[ci].title)).slice(0, 60);
+                return { type: "ElevatedButton", key: "cont", icon: "play",
+                  labelText: contLabel, labelTextEn: contLabel,
+                  onPressed: { event: "read", arg: String(ci) } };
+              }
               return { type: "ElevatedButton", key: "start", icon: "play",
                 labelText: "Empezar a leer", labelTextEn: "Start reading",
                 onPressed: { event: "read", arg: "0" } };
@@ -506,9 +516,6 @@ async function detailTree(state) {
               labelText: fav ? "Quitar de favoritos" : "Añadir a favoritos",
               labelTextEn: fav ? "Remove favourite" : "Add favourite",
               onPressed: "fav" },
-            { type: "TextButton", key: "web",
-              labelText: "Ver en la web", labelTextEn: "Open on the web",
-              onPressed: { go: { url: { href: BASE + "/manga/" + d.slug + "/" } } } },
           ],
         },
       ].filter(Boolean) },
@@ -525,7 +532,22 @@ async function detailTree(state) {
       trailing: { type: "Icon", name: "arrow_forward" },
     });
   }
-  return { type: "ListView", key: "detailBody", items };
+  // El detalle llega de dos maneras: como raíz (la tarjeta de una obra usa
+  // open: { screen }, que reabre el lienzo en esta ruta) o empujado desde
+  // Historial. En ambos casos el botón Atrás del AppBar vuelve a las pestañas
+  // (go.screen reabre el lienzo en "main" conservando el estado); el Atrás
+  // físico de Kino también saca una ruta empujada antes de cerrar.
+  return {
+    type: "Scaffold",
+    appBar: {
+      title: d.meta.title || d.slug,
+      leading: { type: "IconButton", key: "backHome", icon: "arrow_back",
+        labelText: "Atrás", labelTextEn: "Back",
+        onPressed: { go: { screen: { route: "main" } } } },
+      actions: [],
+    },
+    body: { type: "ListView", key: "detailBody", items },
+  };
 }
 
 // contador de navegación entre capítulos: cada visita tiene su propia
@@ -541,8 +563,18 @@ async function readerTree(state) {
   const r = state.reader;
   if (!r) return loadingTree();
   const pages = r.images || [];
-  const ch = r.chapters[r.idx];
-  const hasNext = r.idx + 1 < r.chapters.length;
+  const chapters = Array.isArray(r.chapters) ? r.chapters : [];
+  const ch = chapters[r.idx];
+  // estado corrupto o capítulo que ya no existe: mensaje claro en vez de error
+  if (!ch || !pages.length) {
+    return { type: "Column", padding: 32, gap: 12, crossAxisAlignment: "center", children: [
+      { type: "Icon", name: "error", color: "muted" },
+      { type: "Text", text: "No se pudieron cargar las páginas de este capítulo.", textEn: "Could not load this chapter's pages.", color: "muted" },
+      { type: "ElevatedButton", icon: "arrow_back", labelText: "Volver", labelTextEn: "Back",
+        onPressed: { go: { screen: { route: "detail", args: { slug: r.slug } } } } },
+    ] };
+  }
+  const hasNext = r.idx + 1 < chapters.length;
   const hasPrev = r.idx > 0;
   // clave única por capítulo: al cambiar de capítulo el scroll es un
   // componente nuevo y arranca desde arriba (no hereda la posición anterior)
@@ -708,6 +740,7 @@ export async function screenEvent(ev) {
         chapters = d.chapters;
         idx = parseInt(String(ev.arg || "0"), 10) || 0;
         slug = d.slug; title = d.meta.title; poster = d.meta.poster;
+        if (idx < 0 || idx >= chapters.length) return null;
       } else {
         const r = state.reader;
         if (!r) return null;
