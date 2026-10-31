@@ -351,6 +351,23 @@ const TABS = [
 // entra como ruta EMPUJADA (route: { push: "detail" }): así el botón Atrás
 // de Kino retrocede de verdad (detalle -> pestañas) en vez de cerrar el
 // lienzo. En un riel horizontal la imagen lleva ancho fijo.
+// Título partido en dos filas: maxLines recorta en una sola línea y deja un
+// hueco; repartimos las palabras alrededor del centro del texto.
+function twoLines(t) {
+  const s = (t || "").trim();
+  if (s.length <= 26) return [s];
+  const mid = Math.ceil(s.length / 2);
+  let cut = -1, best = 999;
+  for (let i = 8; i < s.length - 3; i++) {
+    if (s[i] === " ") { const d = Math.abs(i - mid); if (d < best) { best = d; cut = i; } }
+  }
+  if (cut < 0) cut = mid;
+  let a = s.slice(0, cut).trim(), b = s.slice(cut).trim();
+  if (a.length > 34) a = a.slice(0, 33).trim() + "…";
+  if (b.length > 34) b = b.slice(0, 33).trim() + "…";
+  return [a, b];
+}
+
 function posterCard(it, prefix, rail) {
   const img = {
     type: "Image", url: it.poster || "", aspect: "2:3",
@@ -362,10 +379,8 @@ function posterCard(it, prefix, rail) {
   return {
     type: "Card", key: prefix + it.slug, flush: true,
     onTap: { event: "openSeries", arg: it.slug },
-    children: [
-      img,
-      { type: "Text", text: it.title, textEn: it.title, style: "caption", maxLines: 2, padding: 8 },
-    ],
+    children: [img].concat(twoLines(it.title).map((ln) => (
+      { type: "Text", text: ln, textEn: ln, style: "caption", padding: 8 }))),
   };
 }
 
