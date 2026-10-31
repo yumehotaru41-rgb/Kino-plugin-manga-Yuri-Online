@@ -20,7 +20,11 @@ Las obras marcadas como adultas muestran un candado y **no se pueden leer por de
 
 ## Instalación
 
-Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.3.1**.
+Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.3.2**.
+
+## Cambios en 1.3.2
+
+- **Corregido**: al abrir una serie sin progreso guardado (la primera vez que la abrías), la pantalla mostraba «No se pudo cargar (error)» y ningún capítulo cargaba. Ahora muestra «Empezar a leer» y funciona.
 
 ## Cambios en 1.3.1
 
