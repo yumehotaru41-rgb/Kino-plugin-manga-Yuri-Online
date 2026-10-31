@@ -2,13 +2,10 @@
 
 Plugin de [Kino](https://kinotvapp.github.io/kino-plugins/) para leer obras de [yuri-online.com](https://yuri-online.com/).
 
-## Características
-
+- **Autor**: Hotaru Yume (`hotaruyume`)
 - **Inicio** (últimas obras + favoritos), **Biblioteca**, **Favoritos** e **Historial**.
 - **Detalle de obra**: portada, estado, géneros, sinopsis y lista completa de capítulos por AJAX; botón **«Continuar»** donde lo dejaste.
-- **Lector webcómic vertical**: páginas grandes y centradas en TV y celular horizontal (640 de ancho, proporción 2:3); en teléfono vertical cada caja calza con la proporción real, sin recortes.
-- Controles del lector: **solo «Anterior» y «Siguiente»**.
-- Al cambiar de capítulo el lector **arranca siempre desde la primera página** (inclusive al volver a uno ya leído).
+- **Lector webcómic vertical**: páginas grandes y centradas en TV y celular horizontal (640 de ancho, proporción 2:3); en teléfono vertical cada caja calza con la proporción real, sin recortes. Controles: **solo «Anterior» y «Siguiente»**; cada cambio de capítulo arranca desde la primera página.
 - **Sincronización entre aparatos** (`shared`): favoritos y progreso entre teléfono y TV vinculados.
 
 ## Contenido 18+
@@ -17,21 +14,19 @@ Las obras marcadas como adultas muestran un candado y **no se pueden leer por de
 
 ## Instalación
 
-Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.2.6**.
+Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.2.7**.
 
-## Cambios en 1.2.6
+## Cambios en 1.2.7
 
-- Lector limpio: **solo «Anterior» y «Siguiente»** (fuera Zoom, Pantalla completa y «Ver en la web»).
-- Cada cambio de capítulo (incluso volver a uno anterior) **empieza desde la primera página**.
+- **Ícono conforme a Kino**: PNG de 96×96 px con fondo transparente (antes 256×256, lo que bloqueaba la instalación).
+- Nuevos campos `author` y `creator` en el manifiesto.
 
 ## Cambios anteriores
 
-- **1.2.5**: páginas grandes en TV; inmersivo con botón flotante; modo Zoom.
-- **1.2.4**: «Continuar», scroll reiniciado por capítulo, sincronización `shared`.
-- **1.2.3**: páginas solo del bloque de lectura; favoritos con texto claro y fila en Inicio.
-- **1.2.2**: caja de cada página a su proporción real; portada 2:3.
-- **1.2.1**: ancho fijo por tamaño; tarjeta de búsqueda en Inicio.
-- **1.2.0**: capítulos completos por AJAX; lector vertical; tarjetas nativas.
+- **1.2.6**: lector limpio (solo «Anterior»/«Siguiente»); cada capítulo empieza desde arriba.
+- **1.2.5**: páginas grandes en TV; modo zoom.
+- **1.2.4**: «Continuar», sincronización `shared`.
+- **1.2.0–1.2.3**: lector vertical, capítulos por AJAX, favoritos, historial.
 
 ## Nota legal
 
