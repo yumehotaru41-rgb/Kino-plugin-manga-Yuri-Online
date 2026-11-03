@@ -201,35 +201,17 @@ function pageBig(r) {
 //   con proporción 2:3 cuando la página es vertical — llena la pantalla
 // ratioGuia: proporción mediana del capítulo; la usan las páginas que
 // no traen dimensiones (en vez de la caja genérica de siempre).
+// v1.4.1: fill true — la página toma el ANCHO COMPLETO de la pantalla en
+// TV y PC (antes la caja de 640 dejaba media pantalla vacía), y con el
+// aspect por omisión (la proporción propia de la imagen) no hay recortes.
 function pageNodes(p, i, ratioGuia) {
-  const img = {
+  return [{
     type: "Image", key: "p" + i, url: typeof p === "string" ? p : p.url,
     alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
+    fill: true,
     fallback: { type: "Column", padding: 16, children: [
       { type: "Text", text: "Página " + (i + 1), textEn: "Page " + (i + 1), color: "muted" } ] },
-  };
-  const w = (p && p.w) || 0, h = (p && p.h) || 0;
-  let ratio = w > 0 && h > 0 ? h / w : (ratioGuia || 0);
-  if (ratio > 0 && ratio >= 1.05 && ratio <= 1.8) {
-    const small = pageBox(ratio, 400, 640) || { width: 400, height: 560 };
-    const compact = Object.assign({}, img, { key: "pc" + i, sizes: ["compact"],
-      width: small.width, height: small.height });
-    const big = Object.assign({}, img, { key: "pe" + i, sizes: ["medium", "expanded"],
-      width: 640, aspect: "2:3" });
-    return [compact, big];
-  }
-  if (ratio > 0) {
-    const small = pageBox(ratio, 400, 640), big = pageBig(ratio) || pageBox(ratio, 640, 640);
-    if (small && big) {
-      img.width = { compact: small.width, medium: big.width, expanded: big.width };
-      img.height = { compact: small.height, medium: big.height, expanded: big.height };
-      return [img];
-    }
-  }
-  // sin dimensiones conocidas: caja de proporción de página típica
-  img.width = { compact: 400, medium: 400, expanded: 480 };
-  img.height = { compact: 560, medium: 560, expanded: 640 };
-  return [img];
+  }];
 }
 
 // Carga una obra: página de detalle + lista COMPLETA de capítulos.
@@ -717,19 +699,14 @@ function modoLectorEfectivo(n) {
   return puede && modoLectorPref() === "paginas" ? "paginas" : "tira";
 }
 
-// Una página del modo páginas: fit "width" (Kino 0.9.81; el ancho de la
-// caja y el alto propio de la imagen, sin recortes) dentro de un scroll
+// Una página del modo páginas: fill true (el ancho completo de la caja,
+// con la proporción propia de la imagen: sin recortes) dentro de un scroll
 // con zoom. Sin fallback: con 250 páginas el árbol superaría los 600
 // nodos por pantalla que admite Kino.
 function paginaFit(p, i, ratioGuia) {
-  const w = (p && p.w) || 0, h = (p && p.h) || 0;
-  let ratio = w > 0 && h > 0 ? h / w : (ratioGuia || 1.4);
-  if (!(ratio >= 0.2)) ratio = 0.2;
-  if (ratio > 5) ratio = 5;
   return { type: "SingleChildScrollView", key: "z" + i, zoom: true, children: [
     { type: "Image", key: "p" + i, url: typeof p === "string" ? p : p.url,
-      alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
-      fit: "width", aspect: "1:" + (Math.round(ratio * 100) / 100) } ] };
+      alt: "Página " + (i + 1), altEn: "Page " + (i + 1), fill: true } ] };
 }
 
 async function readerTree(state) {
@@ -772,7 +749,7 @@ async function readerTree(state) {
     body.push({
       type: "SingleChildScrollView", key: scrollKey, flex: 1, zoom: true,
       children: [{
-        type: "Column", gap: 4, crossAxisAlignment: "center",
+        type: "Column", gap: 4, crossAxisAlignment: "center", fill: true,
         children: pages.flatMap((p, i) => pageNodes(p, i, ratioGuia)),
       }],
     });
