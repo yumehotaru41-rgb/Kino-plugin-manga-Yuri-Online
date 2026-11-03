@@ -560,6 +560,14 @@ async function homeBody(state) {
     { type: "SingleChildScrollView", key: key, direction: "horizontal", padding: 16,
       children: [{ type: "Row", gap: 8, children: list.slice(0, 60).map((it) => posterCard(it, key + "-", true)) }] },
   ] : [];
+  // obras empezadas (progreso), las más recientes primero: aparecen
+  // solas debajo de las últimas obras, sin tocar nada
+  const prog = progress();
+  const leyendo = Object.keys(prog)
+    .map((slug) => ({ slug, title: prog[slug].title, poster: prog[slug].poster, ts: prog[slug].ts || 0 }))
+    .filter((x) => x.title)
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, 20);
   return {
     type: "SingleChildScrollView", key: "home", flex: 1,
     children: [{
@@ -572,6 +580,7 @@ async function homeBody(state) {
           onTap: { event: "goSearch" } },
       // favoritos siempre a mano, debajo de las últimas obras
       ].concat(rail("Últimas obras", "Latest works", "latest", items))
+        .concat(rail("Seguir leyendo", "Continue reading", "leyendo", leyendo))
         .concat(rail("Mis favoritos", "My favourites", "favs", favs())),
     }],
   };
@@ -784,6 +793,8 @@ async function readerTree(state) {
       { type: "TextButton", key: "btnModo", labelText: modo === "paginas" ? "Modo tira" : "Modo páginas",
         labelTextEn: modo === "paginas" ? "Strip mode" : "Page mode", onPressed: "modoLector" },
     ] : []).concat([
+      { type: "TextButton", key: "btnPantalla", icon: "visibility",
+        labelText: "Pantalla completa", labelTextEn: "Fullscreen", onPressed: "lectorInm" },
       { type: "Text",
         text: "cap. " + (r.idx + 1) + " de " + chapters.length + " · pellizca para acercar",
         textEn: "ch. " + (r.idx + 1) + " of " + chapters.length, style: "caption", color: "muted" },
@@ -791,7 +802,8 @@ async function readerTree(state) {
   });
   const raiz = {
     type: "Scaffold",
-    appBar: inm ? undefined : { title: ch ? ch.title : "Leyendo",
+    appBar: inm ? undefined : { type: "AppBar", mergeWithKinoBar: true, dense: true, key: "barReader",
+      title: ch ? ch.title : "Leyendo",
       leading: { type: "IconButton", key: "backFromReader", icon: "arrow_back",
         labelText: "Atrás", labelTextEn: "Back",
         onPressed: { event: "popBack" } },
