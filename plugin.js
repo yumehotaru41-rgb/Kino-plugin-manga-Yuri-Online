@@ -201,14 +201,23 @@ function pageBig(r) {
 //   con proporción 2:3 cuando la página es vertical — llena la pantalla
 // ratioGuia: proporción mediana del capítulo; la usan las páginas que
 // no traen dimensiones (en vez de la caja genérica de siempre).
-// v1.4.1: fill true — la página toma el ANCHO COMPLETO de la pantalla en
-// TV y PC (antes la caja de 640 dejaba media pantalla vacía), y con el
-// aspect por omisión (la proporción propia de la imagen) no hay recortes.
+// v1.4.2: fit "width" + aspect de la proporción medida (receta de
+// MangaTrack, Kino 0.9.81): la página toma el ancho completo de la caja
+// y el ALTO propio de su proporción real — la página vertical entera,
+// nunca recortada. fill true para que la caja sea el ancho de pantalla.
+function aspectDe(p, ratioGuia) {
+  const w = (p && p.w) || 0, h = (p && p.h) || 0;
+  let ratio = w > 0 && h > 0 ? h / w : (ratioGuia || 1.4);
+  if (!(ratio >= 0.2)) ratio = 0.2;
+  if (ratio > 5) ratio = 5;
+  return "1:" + (Math.round(ratio * 100) / 100);
+}
+
 function pageNodes(p, i, ratioGuia) {
   return [{
     type: "Image", key: "p" + i, url: typeof p === "string" ? p : p.url,
     alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
-    fill: true,
+    fill: true, fit: "width", aspect: aspectDe(p, ratioGuia),
     fallback: { type: "Column", padding: 16, children: [
       { type: "Text", text: "Página " + (i + 1), textEn: "Page " + (i + 1), color: "muted" } ] },
   }];
@@ -699,14 +708,15 @@ function modoLectorEfectivo(n) {
   return puede && modoLectorPref() === "paginas" ? "paginas" : "tira";
 }
 
-// Una página del modo páginas: fill true (el ancho completo de la caja,
-// con la proporción propia de la imagen: sin recortes) dentro de un scroll
+// Una página del modo páginas: fit "width" + aspect medido (página
+// vertical entera a ancho completo, sin recortes) dentro de un scroll
 // con zoom. Sin fallback: con 250 páginas el árbol superaría los 600
 // nodos por pantalla que admite Kino.
 function paginaFit(p, i, ratioGuia) {
   return { type: "SingleChildScrollView", key: "z" + i, zoom: true, children: [
     { type: "Image", key: "p" + i, url: typeof p === "string" ? p : p.url,
-      alt: "Página " + (i + 1), altEn: "Page " + (i + 1), fill: true } ] };
+      alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
+      fill: true, fit: "width", aspect: aspectDe(p, ratioGuia) } ] };
 }
 
 async function readerTree(state) {
@@ -734,6 +744,10 @@ async function readerTree(state) {
   const scrollKey = "pages-" + r.idx + "-" + chKey + "-" + (r.tk || 0);
   const ratioGuia = ratioGuiaDe(pages);
   const modo = modoLectorEfectivo(pages.length);
+  // Modo pantalla completa (inmersivo): oculta la barra de arriba y los
+  // botones de abajo; queda un botoncito flotante discreto (el mismo ojo)
+  // para traerlos de vuelta. La preferencia vive en el almacén ("lectorInm").
+  const inm = getJson("lectorInm", 0) ? true : false;
   const body = [];
   if (modo === "paginas") {
     // Modo páginas: una página a la vez, se pasa con el dedo, barra de
@@ -754,7 +768,7 @@ async function readerTree(state) {
       }],
     });
   }
-  body.push({
+  if (!inm) body.push({
     type: "Row", gap: 12, padding: 16, mainAxisAlignment: "center", wrap: true, children: [
       { type: "ElevatedButton", icon: "arrow_back", labelText: "Anterior", labelTextEn: "Previous",
         onPressed: "prevChap", enabled: hasPrev },
@@ -775,15 +789,24 @@ async function readerTree(state) {
         textEn: "ch. " + (r.idx + 1) + " of " + chapters.length, style: "caption", color: "muted" },
     ]),
   });
-  return {
+  const raiz = {
     type: "Scaffold",
-    appBar: { title: ch ? ch.title : "Leyendo",
+    appBar: inm ? undefined : { title: ch ? ch.title : "Leyendo",
       leading: { type: "IconButton", key: "backFromReader", icon: "arrow_back",
         labelText: "Atrás", labelTextEn: "Back",
         onPressed: { event: "popBack" } },
-      actions: [] },
+      actions: [
+        { type: "IconButton", key: "verBarra", icon: "visibility",
+          labelText: "Pantalla completa (ocultar botones)", labelTextEn: "Fullscreen (hide buttons)",
+          onPressed: { event: "lectorInm" } },
+      ] },
     body: { type: "Column", children: body },
   };
+  // En pantalla completa solo queda el botoncito flotante para volver.
+  if (inm) raiz.floatingActionButton = { type: "FloatingActionButton", key: "verBarras",
+    icon: "visibility", tooltip: "Mostrar botones", tooltipEn: "Show buttons",
+    onPressed: { event: "lectorInm" } };
+  return raiz;
 }
 
 async function searchTree(state) {
@@ -970,6 +993,12 @@ export async function screenEvent(ev) {
       if (ks.length > 300) for (const k of ks.slice(0, ks.length - 300)) try { kino.storage.remove(k); } catch (e) { }
       try { kino.storage.set("pg:" + ch.url, String(at)); } catch (e) { }
       return null;
+    }
+    // Alternar pantalla completa: oculta (o trae de vuelta) la barra de
+    // arriba y los botones de abajo del lector.
+    if (name === "lectorInm") {
+      setJson("lectorInm", getJson("lectorInm", 0) ? 0 : 1);
+      return { state: { _r: Date.now() } };
     }
     // Alternar tira/páginas (solo con el widget disponible).
     if (name === "modoLector") {
