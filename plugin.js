@@ -199,7 +199,9 @@ function pageBig(r) {
 // - compact (teléfono vertical): caja exacta a la proporción real (sin recorte)
 // - medium/expanded (TV, celular horizontal): página GRANDE a 640 de ancho
 //   con proporción 2:3 cuando la página es vertical — llena la pantalla
-function pageNodes(p, i) {
+// ratioGuia: proporción mediana del capítulo; la usan las páginas que
+// no traen dimensiones (en vez de la caja genérica de siempre).
+function pageNodes(p, i, ratioGuia) {
   const img = {
     type: "Image", key: "p" + i, url: typeof p === "string" ? p : p.url,
     alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
@@ -207,9 +209,8 @@ function pageNodes(p, i) {
       { type: "Text", text: "Página " + (i + 1), textEn: "Page " + (i + 1), color: "muted" } ] },
   };
   const w = (p && p.w) || 0, h = (p && p.h) || 0;
-  const ratio = w > 0 && h > 0 ? h / w : 0;
-  const tall = ratio >= 1.05 && ratio <= 1.8;
-  if (ratio > 0 && tall) {
+  let ratio = w > 0 && h > 0 ? h / w : (ratioGuia || 0);
+  if (ratio > 0 && ratio >= 1.05 && ratio <= 1.8) {
     const small = pageBox(ratio, 400, 640) || { width: 400, height: 560 };
     const compact = Object.assign({}, img, { key: "pc" + i, sizes: ["compact"],
       width: small.width, height: small.height });
@@ -252,6 +253,119 @@ async function loadSeries(slug) {
     }
   } catch (e) { kino.log("chapters", "ajax falló: " + e.message); }
   return { slug, meta, chapters };
+}
+
+// ------------------------------------------------- medir páginas
+// Receta de MangaTrack: descargar solo los primeros bytes de cada
+// imagen (kino.fetch maxBytes) y leer sus dimensiones del encabezado
+// (JPEG/PNG/GIF). Así las páginas sin width/height en el HTML también
+// quedan medidas y la caja calza con su proporción real.
+function deB64(s) {
+  const ABC = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const out = [];
+  let acc = 0, bits = 0;
+  for (let i = 0; i < s.length; i++) {
+    const v = ABC.indexOf(s.charAt(i));
+    if (v < 0) continue;
+    acc = (acc * 64) + v;
+    bits += 6;
+    if (bits >= 8) { bits -= 8; out.push((acc >> bits) & 0xFF); acc = acc % Math.pow(2, bits); }
+  }
+  return out;
+}
+
+function dimsDeBytes(b) {
+  if (!Array.isArray(b) || b.length < 12) return null;
+  if (b[0] === 0xFF && b[1] === 0xD8) {
+    let i = 2;
+    while (i + 9 < b.length) {
+      if (b[i] !== 0xFF) { i++; continue; }
+      const m = b[i + 1];
+      if (m === 0x01 || (m >= 0xD0 && m <= 0xD9)) { i += 2; continue; }
+      const len = (b[i + 2] << 8) | b[i + 3];
+      if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) {
+        return { w: (b[i + 7] << 8) | b[i + 8], h: (b[i + 5] << 8) | b[i + 6] };
+      }
+      if (m === 0xDA) break;
+      i += 2 + len;
+    }
+    return null;
+  }
+  if (b[0] === 0x89 && b[1] === 0x50) {
+    return { w: (b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19],
+      h: (b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23] };
+  }
+  if (b[0] === 0x47 && b[1] === 0x49) return { w: b[6] | (b[7] << 8), h: b[8] | (b[9] << 8) };
+  return null;
+}
+
+function hashUrl(u) {
+  let h = 5381;
+  for (let i = 0; i < u.length; i++) h = ((h * 33) + u.charCodeAt(i)) >>> 0;
+  return ("0000000" + h.toString(16)).slice(-8);
+}
+
+function dimsTodas() { return getJson("dims", {}); }
+
+function dimPut(nuevos) {
+  try {
+    const all = dimsTodas();
+    for (let i = 0; i < nuevos.length; i++) all[nuevos[i][0]] = nuevos[i][1];
+    const ks = Object.keys(all);
+    if (ks.length > 300) for (let i = 0; i < ks.length - 300; i++) delete all[ks[i]];
+    setJson("dims", all);
+  } catch (e) { kino.log("dims", "guardar: " + e.message); }
+}
+
+async function dimsDeImagen(url) {
+  try {
+    const r = await kino.fetch(url, { maxBytes: 16384, timeoutMs: 5000 });
+    if (!r.ok) return null;
+    const d = dimsDeBytes(deB64(r.base64()));
+    return d && d.w > 0 && d.h > 0 ? d : null;
+  } catch (e) { return null; }
+}
+
+// Mide (con el caché primero) las páginas que vengan sin dimensiones,
+// en lotes de 12 y con tope de tiempo para no eternizar la apertura.
+async function medirImagenes(images, presupuesto) {
+  const t0 = Date.now();
+  const cache = dimsTodas();
+  const pend = [];
+  let listas = 0;
+  for (let i = 0; i < images.length; i++) {
+    const im = images[i];
+    if (im.w > 0 && im.h > 0) { listas++; continue; }
+    const c = cache[hashUrl(im.url)];
+    if (Array.isArray(c) && c[0] > 0 && c[1] > 0) { im.w = c[0]; im.h = c[1]; listas++; continue; }
+    pend.push(im);
+  }
+  const nuevas = [];
+  let hechas = 0;
+  for (let i = 0; i < pend.length && hechas < 48; i += 12) {
+    if (Date.now() - t0 > (presupuesto || 6000)) break;
+    const lote = pend.slice(i, Math.min(pend.length, i + 12, i + 48 - hechas));
+    hechas += lote.length;
+    const rs = await Promise.all(lote.map((im) => dimsDeImagen(im.url).catch(() => null)));
+    for (let j = 0; j < lote.length; j++) {
+      if (rs[j]) {
+        lote[j].w = rs[j].w; lote[j].h = rs[j].h;
+        listas++;
+        nuevas.push([hashUrl(lote[j].url), [lote[j].w, lote[j].h]]);
+      }
+    }
+  }
+  if (nuevas.length) dimPut(nuevas);
+  return listas;
+}
+
+// Proporción mediana de las páginas medidas: la que usan las cajas de
+// las páginas sin dimensiones (receta de MangaTrack).
+function ratioGuiaDe(pages) {
+  const medidas = pages.filter((p) => p && p.w > 0 && p.h > 0).map((p) => p.h / p.w);
+  if (!medidas.length) return 0;
+  medidas.sort((a, b) => a - b);
+  return medidas[parseInt((medidas.length - 1) / 2, 10)];
 }
 
 // ------------------------------------------------------------ almacen
@@ -580,6 +694,44 @@ let navSeq = 0;
 // proporción real: el componente Image de Kino no tiene modo «ajustar»
 // (siempre rellena la caja recortando), así que la caja debe calzar con
 // la página para que se vea entera.
+// Modo páginas (Kino 0.9.81, receta de MangaTrack): el widget "pages"
+// solo existe si kino.screen.widgets lo anuncia; con un Kino anterior
+// el lector sigue siendo la tira vertical de siempre.
+function pagesDisponible() {
+  try {
+    return typeof kino === "object" && kino !== null &&
+      typeof kino.screen === "object" && kino.screen !== null &&
+      Array.isArray(kino.screen.widgets) &&
+      kino.screen.widgets.indexOf("pages") >= 0;
+  } catch (e) { return false; }
+}
+
+function modoLectorPref() {
+  return getJson("modoLector", "tira") === "paginas" ? "paginas" : "tira";
+}
+
+// El modo páginas solo procede con el widget disponible y un capítulo
+// de 2 a 250 páginas (los límites del widget con progress "bar").
+function modoLectorEfectivo(n) {
+  const puede = pagesDisponible() && n >= 2 && n <= 250;
+  return puede && modoLectorPref() === "paginas" ? "paginas" : "tira";
+}
+
+// Una página del modo páginas: fit "width" (Kino 0.9.81; el ancho de la
+// caja y el alto propio de la imagen, sin recortes) dentro de un scroll
+// con zoom. Sin fallback: con 250 páginas el árbol superaría los 600
+// nodos por pantalla que admite Kino.
+function paginaFit(p, i, ratioGuia) {
+  const w = (p && p.w) || 0, h = (p && p.h) || 0;
+  let ratio = w > 0 && h > 0 ? h / w : (ratioGuia || 1.4);
+  if (!(ratio >= 0.2)) ratio = 0.2;
+  if (ratio > 5) ratio = 5;
+  return { type: "SingleChildScrollView", key: "z" + i, zoom: true, children: [
+    { type: "Image", key: "p" + i, url: typeof p === "string" ? p : p.url,
+      alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
+      fit: "width", aspect: "1:" + (Math.round(ratio * 100) / 100) } ] };
+}
+
 async function readerTree(state) {
   const r = state.reader;
   if (!r) return loadingTree();
@@ -603,23 +755,48 @@ async function readerTree(state) {
   // clave única por visita (r.tk cambia en cada cambio de capítulo): el
   // scroll siempre arranca desde la primera página
   const scrollKey = "pages-" + r.idx + "-" + chKey + "-" + (r.tk || 0);
-  const pageCol = {
-    type: "Column", gap: 4, crossAxisAlignment: "center",
-    children: pages.flatMap((p, i) => pageNodes(p, i)),
-  };
+  const ratioGuia = ratioGuiaDe(pages);
+  const modo = modoLectorEfectivo(pages.length);
   const body = [];
-  body.push({
-    type: "SingleChildScrollView", key: scrollKey, flex: 1,
-    children: [pageCol],
-  });
+  if (modo === "paginas") {
+    // Modo páginas: una página a la vez, se pasa con el dedo, barra de
+    // progreso de Kino y zoom por pellizco. La página actual vive en
+    // state.inputs.pgs (la posición la guarda el evento pgChanged).
+    body.push({
+      type: "pages", key: "pgs", flex: 1, progress: "bar", onPageChanged: "pgChanged",
+      children: pages.map((p, i) => paginaFit(p, i, ratioGuia)),
+    });
+  } else {
+    // Tira vertical de siempre: páginas pegadas a ancho completo, ahora
+    // con zoom de pellizco en todo el capítulo.
+    body.push({
+      type: "SingleChildScrollView", key: scrollKey, flex: 1, zoom: true,
+      children: [{
+        type: "Column", gap: 4, crossAxisAlignment: "center",
+        children: pages.flatMap((p, i) => pageNodes(p, i, ratioGuia)),
+      }],
+    });
+  }
   body.push({
     type: "Row", gap: 12, padding: 16, mainAxisAlignment: "center", wrap: true, children: [
       { type: "ElevatedButton", icon: "arrow_back", labelText: "Anterior", labelTextEn: "Previous",
         onPressed: "prevChap", enabled: hasPrev },
+      { type: "DropdownButton", key: "jumpChap", labelText: "Ir a capítulo", labelTextEn: "Go to chapter",
+        value: String(r.idx), onChanged: "jumpChap",
+        options: chapters.length
+          ? chapters.map((c, i) => ({ value: String(i), label: c.title }))
+          : [{ value: "0", label: "—" }] },
       { type: "ElevatedButton", labelText: hasNext ? "Siguiente" : "Último capítulo",
         labelTextEn: hasNext ? "Next" : "Last chapter",
         icon: "arrow_forward", onPressed: "nextChap", enabled: hasNext },
-    ],
+    ].concat(pagesDisponible() ? [
+      { type: "TextButton", key: "btnModo", labelText: modo === "paginas" ? "Modo tira" : "Modo páginas",
+        labelTextEn: modo === "paginas" ? "Strip mode" : "Page mode", onPressed: "modoLector" },
+    ] : []).concat([
+      { type: "Text",
+        text: "cap. " + (r.idx + 1) + " de " + chapters.length + " · pellizca para acercar",
+        textEn: "ch. " + (r.idx + 1) + " of " + chapters.length, style: "caption", color: "muted" },
+    ]),
   });
   return {
     type: "Scaffold",
@@ -757,7 +934,7 @@ export async function screenEvent(ev) {
       syncPush("favs", f);
       return { toast: added ? "Añadida a favoritos" : "Quitada de favoritos" };
     }
-    if (name === "read" || name === "nextChap" || name === "prevChap") {
+    if (name === "read" || name === "nextChap" || name === "prevChap" || name === "jumpChap") {
       let chapters, idx, slug, title, poster;
       if (name === "read") {
         const d = state.detail;
@@ -770,7 +947,9 @@ export async function screenEvent(ev) {
         const r = state.reader;
         if (!r) return null;
         chapters = r.chapters;
-        idx = r.idx + (name === "nextChap" ? 1 : -1);
+        idx = name === "jumpChap"
+          ? parseInt(String(ev.value || "0"), 10) || 0
+          : r.idx + (name === "nextChap" ? 1 : -1);
         slug = r.slug; title = r.title; poster = r.poster;
         if (idx < 0 || idx >= chapters.length) return null;
       }
@@ -782,10 +961,46 @@ export async function screenEvent(ev) {
         if (images.length) readerCachePut(ch.url, images);
       }
       if (!images.length) return { toast: "No se encontraron páginas en este capítulo." };
+      // Medir las páginas sin dimensiones (cabeceras de imagen por
+      // descarga parcial, con caché): así ninguna caja recorta.
+      try { await medirImagenes(images, 6000); } catch (e) { kino.log("dims", e.message); }
       markRead(slug, title, poster, ch.title, ch.url);
       const reader = { slug, title, poster, chapters, idx, images, tk: ++navSeq };
-      if (name === "read") return { state: { reader }, route: { push: "read" } };
-      return { state: { reader } };
+      const resp = { state: { reader } };
+      if (name === "read") resp.route = { push: "read" };
+      // Modo páginas: retomar en la página donde quedó este capítulo
+      // (la receta de las docs: un set de ui sobre la key del pages).
+      if (modoLectorEfectivo(images.length) === "paginas") {
+        let at = parseInt(getJson("pg:" + ch.url, 0), 10);
+        if (!(at >= 0) || at >= images.length) at = 0;
+        resp.ui = [{ set: { key: "pgs", value: at } }];
+      }
+      return resp;
+    }
+    // Página que se está viendo en el modo páginas: se guarda por
+    // capítulo para retomarla al volver.
+    if (name === "pgChanged") {
+      const r = state.reader;
+      if (!r) return null;
+      const ch = (r.chapters || [])[r.idx];
+      if (!ch || !ch.url) return null;
+      let at = parseInt(String(ev.value === undefined ? "" : ev.value), 10);
+      if (!(at >= 0)) at = 0;
+      const ks = [];
+      try {
+        for (const k of kino.storage.keys()) if (k.indexOf("pg:") === 0) ks.push(k);
+      } catch (e) { }
+      if (ks.length > 300) for (const k of ks.slice(0, ks.length - 300)) try { kino.storage.remove(k); } catch (e) { }
+      try { kino.storage.set("pg:" + ch.url, String(at)); } catch (e) { }
+      return null;
+    }
+    // Alternar tira/páginas (solo con el widget disponible).
+    if (name === "modoLector") {
+      if (!pagesDisponible()) return null;
+      const nuevo = modoLectorPref() === "paginas" ? "tira" : "paginas";
+      setJson("modoLector", nuevo);
+      return { state: { _r: Date.now() },
+        toast: nuevo === "paginas" ? "Modo páginas" : "Modo tira" };
     }
     if (name === "openSeries") {
       const slug = String(ev.arg || "");
