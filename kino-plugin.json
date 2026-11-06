@@ -3,7 +3,7 @@
   "name": "Yuri Online",
   "author": "Hotaru Yume",
   "creator": "hotaruyume",
-  "version": "1.5.0",
+  "version": "2.0.0",
   "apiVersion": 14,
   "entry": "plugin.js",
   "icon": "icon.png",
@@ -14,7 +14,7 @@
     "screen",
     "shared"
   ],
-  "description": "Lee obras de yuri-online.com: lector webcómic con modo tira o página a página (con zoom), buscador, favoritos y progreso sincronizados entre tus aparatos.",
+  "description": "Lee obras de yuri-online.com: lector webcómic con modo tira o página a página, Inicio por categorías, buscador, favoritos y progreso sincronizados entre tus aparatos.",
   "screen": {
     "label": "Yuri Online",
     "labelEn": "Yuri Online",

@@ -1,34 +1,71 @@
-
-// Plugin de Kino para leer obras de yuri-online.com
-// Interfaz tipo lector de manga (Kototoro): Inicio, Biblioteca,
-// Favoritos, Historial, detalle de obra con lista completa de
-// capítulos (AJAX de Madara) y lector webcómic vertical.
+// Plugin de Kino para leer obras de yuri-online.com (Yuri Online)
+// Interfaz tipo lector de manga: Inicio, Biblioteca, Favoritos,
+// Historial, detalle de obra con lista de capítulos (AJAX de Madara)
+// y lector webcómic vertical. REESCRITO (v2.0.0) con la arquitectura
+// de ZonaTM0, a petición del usuario, para que ambos plugins se
+// comporten IGUAL: misma pantalla de inicio, mismos botones y el
+// mismo lector SIEMPRE a pantalla completa:
+//   - Inicio por categorías: secciones por género (Acción, Comedia,
+//     Fantasía, Romance, Drama) debajo de «Seguir leyendo» y «Mis
+//     favoritos», sin repetidos y con «Ver más» (v1.2.0 de ZonaTM0).
+//   - Nada bloquea la pantalla (patrón MangaTrack): detalle, Inicio y
+//     Biblioteca se pintan AL INSTANTE con esqueletos y los datos
+//     llegan en segundo plano por el temporizador «every».
+//   - Detalle: «Seguir · Cap. N» a todo el ancho, fila secundaria
+//     solo con iconos (Favoritos · Actualizar · Olvidar), sinopsis
+//     plegable, conmutador «Desde lo último / Desde el principio».
+//   - Lector SIEMPRE en pantalla completa (v1.1.6 de ZonaTM0): sin
+//     barra propia ni botón flotante; «Anterior»/«Siguiente» están
+//     UNA sola vez, en la tarjeta del final del capítulo (y en la
+//     barra fina si eliges el modo páginas).
+//   - Los capítulos viven en kino.storage (v1.1.2 de ZonaTM0): el
+//     estado de la pantalla queda mínimo y las obras largas no
+//     desbordan el límite de Kino.
+// Capa del sitio (Madara/WordPress, yuri-online.com):
+//   - Biblioteca y géneros: /manga/page/N/ y /manga-genre/<slug>/
+//   - Ficha de obra:        /manga/<slug>/
+//   - Capítulos:            POST /manga/<slug>/ajax/chapters/
+//   - Lector:               /manga/<slug>/capitulo-…/ (imágenes /__img/)
 // Funciona en teléfono y TV desde el mismo árbol de nodos.
-//
-// v1.5.0 — portado de ZonaTM0 v1.2.0: Inicio por categorías.
-//   - Debajo de los rieles de siempre («Últimas obras», «Seguir
-//     leyendo», «Mis favoritos») hay una sección por género
-//     (Romance, Drama, Comedia, Fantasía, Acción) con las obras de
-//     /manga-genre/<slug>/ del sitio.
-//   - Sin repetidos: cada obra aparece solo en la PRIMERA sección que
-//     la contiene.
-//   - Al final de cada sección, botón «Ver más» que añade otra página
-//     de ese género (hasta 39 obras).
-//   - Las secciones cargan en segundo plano (temporizador «cargarRoot»,
-//     una por tick): el Inicio se pinta al instante con esqueletos.
 //
 // Requiere Kino 0.9.74 o superior (apiVersion 14, capability "screen").
 
 const BASE = "https://yuri-online.com";
+const MAX_CAPS = 490; // tope de capítulos por pantalla (Kino admite ~600 nodos)
+const LIB_MAX = 144; // tope de obras acumuladas en la Biblioteca (estado pequeño)
 
 // ---------------------------------------------------------------- red
 
-async function getHtml(path) {
-  const r = await kino.fetch(BASE + path, { headers: { Accept: "text/html" } });
+// Todas las peticiones llevan timeoutMs: si el sitio no responde, se
+// lanza un error que se muestra con «Reintentar».
+async function getHtml(path, timeoutMs) {
+  const r = await kino.fetch(BASE + path, {
+    headers: { Accept: "text/html", Referer: BASE + "/" },
+    timeoutMs: timeoutMs || 20000,
+  });
   if (!r.ok) throw kino.error("network", "HTTP " + r.status, {
     userMessage: "No se pudo conectar con Yuri Online. Inténtalo de nuevo.",
   });
   return r.text();
+}
+
+// Listados de obras (Madara). Un solo punto de entrada con la misma
+// firma que ZonaTM0, para que el resto del plugin no cambie:
+//   - gender: slug del género → /manga-genre/<slug>/ (con /page/N/)
+//   - q:       búsqueda          → /?s=<q>&post_type=wp-manga
+//   - nada:    Biblioteca        → /manga/page/N/
+// Devuelve HTML en bruto (seriesCards lo parsea).
+async function getLibHtml(page, order, q, gender) {
+  const p = parseInt(page, 10) || 1;
+  if (gender) {
+    return getHtml(p > 1 ? "/manga-genre/" + gender + "/page/" + p + "/"
+      : "/manga-genre/" + gender + "/", 25000);
+  }
+  if (q) {
+    return getHtml((p > 1 ? "/page/" + p + "/" : "/") +
+      "?s=" + encodeURIComponent(q) + "&post_type=wp-manga", 25000);
+  }
+  return getHtml("/manga/page/" + p + "/", 25000);
 }
 
 // ------------------------------------------------------------- scraping
@@ -40,7 +77,8 @@ function clean(s) {
     .replace(/\s+/g, " ").trim();
 }
 
-// Tarjetas de obras: <a href=".../manga/slug/"><img src="poster">… <a href>Título</a>
+// Tarjetas de obras: <a href=".../manga/slug/"><img src="poster">…
+// <a href>Título</a>. El «adult» marca el contenido 18+.
 function seriesCards(html, max) {
   const out = [];
   const seen = {};
@@ -67,24 +105,8 @@ function seriesCards(html, max) {
   return out;
 }
 
-// Capítulos de una obra: enlaces .../manga/<slug>/capitulo-<n>/
-function chapterList(html, slug) {
-  const map = new Map();
-  const re = new RegExp(
-    'href="(https?:\\/\\/yuri-online\.com\/manga\/' + slug +
-    '\/capitulo-([a-z0-9][a-z0-9-]*)\/)"[^>]*>([^<]{0,80})<', "g");
-  let m;
-  while ((m = re.exec(html)) !== null) {
-    const url = m[1], tail = m[2], txt = clean(m[3]);
-    if (!map.has(url)) map.set(url, { url, tail, title: txt || "Capítulo " + tail });
-  }
-  const arr = [...map.values()];
-  arr.sort((a, b) => natCmp(a.tail, b.tail));
-  return arr;
-}
-
 function natCmp(a, b) {
-  const A = a.match(/\d+|\D+/g) || [], B = b.match(/\d+|\D+/g) || [];
+  const A = String(a).match(/\d+|\D+/g) || [], B = String(b).match(/\d+|\D+/g) || [];
   for (let i = 0; i < Math.max(A.length, B.length); i++) {
     const x = A[i] || "", y = B[i] || "";
     if (/^\d+$/.test(x) && /^\d+$/.test(y)) {
@@ -98,7 +120,24 @@ function natCmp(a, b) {
   return 0;
 }
 
-// Contenido 18+: sin bloqueo; solo se marca la portada con un aviso pequeño
+// Capítulos de una obra: enlaces .../manga/<slug>/capitulo-<n>/
+// Devuelve [{ url, tail, num, title }] orden natural.
+function chapterList(html, slug) {
+  const map = new Map();
+  const re = new RegExp(
+    'href="(https?:\/\/yuri-online\.com\/manga\/' + slug +
+    '\/capitulo-([a-z0-9][a-z0-9-]*)\/)"[^>]*>([^<]{0,80})<', "g");
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const url = m[1], tail = m[2], txt = clean(m[3]);
+    if (!map.has(url)) {
+      map.set(url, { url, tail, num: tail, title: txt || "Capítulo " + tail });
+    }
+  }
+  const arr = [...map.values()];
+  arr.sort((a, b) => natCmp(a.tail, b.tail));
+  return arr;
+}
 
 // Metadatos de la página de una obra
 function seriesMeta(html) {
@@ -108,7 +147,8 @@ function seriesMeta(html) {
   return {
     title: pick(/<h1[^>]*>([^<]{1,200})</) || pick(/property="og:title"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:title"/),
     poster: pick(/property="og:image"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:image"/),
-    overview: pick(/property="og:description"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:description"/),
+    // la sinopsis SÍ viaja en el estado: recortada
+    overview: (pick(/property="og:description"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:description"/)).slice(0, 600),
     status: labelValue(html, "Estado"),
     genres: labelValue(html, "Género(s)"),
     type: labelValue(html, "Tipo de obra"),
@@ -125,10 +165,9 @@ function labelValue(html, label) {
 }
 
 // Imágenes de un capítulo (servidas por el mismo dominio, /__img/…).
-// Devuelve { url, w, h }. El escaneo se hace sobre el HTML en bruto (no
-// solo etiquetas <img>: algunos temas cargan las páginas desde un script),
-// limitado al bloque de lectura cuando existe. Las dimensiones en píxeles
-// se buscan cerca de cada URL (width=/height= en la misma etiqueta).
+// Devuelve [{ url, w, h }]. El escaneo se hace sobre el HTML en bruto
+// (no solo etiquetas <img>: algunos temas cargan las páginas desde un
+// script), limitado al bloque de lectura cuando existe.
 function readerImages(html) {
   // ventana de lectura: las páginas del capítulo viven aquí; así no se
   // cuelan banners ni portadas de otras obras
@@ -152,84 +191,23 @@ function readerImages(html) {
     }
     return out;
   };
-  const IMG_RE = '(https:\\/\\/yuri-online\\.com\\/__img\\/[A-Za-z0-9_\\/.%-]+?\\.(?:jpe?g|png|webp|avif))';
+  const IMG_RE = '(https?:\/\/yuri-online\.com\/__img\/[A-Za-z0-9_\/.%-]+?\.(?:jpe?g|png|webp|avif))';
   let out = collect(win, IMG_RE);
-  if (!out.length) out = collect(win, '(https:\\/\\/yuri-online\\.com\\/wp-content\\/uploads\\/[^"\'\\s>]+?\\.(?:jpe?g|png|webp))');
-  // última carta: en toda la página (algunos temas referencian las páginas
-  // solo desde un script fuera del bloque de lectura)
+  if (!out.length) out = collect(win, '(https?:\/\/yuri-online\.com\/wp-content\/uploads\/[^"\'\s>]+?\.(?:jpe?g|png|webp))');
+  // última carta: en toda la página (algunos temas referencian las
+  // páginas solo desde un script fuera del bloque de lectura)
   if (!out.length) out = collect(html, IMG_RE);
   return out;
 }
 
-// Caja (dp) para una página de proporción r = alto/ancho: Kino solo acepta
-// tamaños de su escala, así que se busca el par ancho×alto de la escala cuya
-// proporción más se acerque a la real (recorte mínimo, a menudo cero).
-const SIZE_SCALE = [16, 24, 32, 40, 48, 64, 80, 96, 120, 160, 200, 240, 320, 400, 480, 560, 640];
-
-function pageBox(r, wCap, hCap) {
-  if (!isFinite(r) || r <= 0) return null;
-  for (const tol of [0.02, 0.05, 0.12, 0.25]) {
-    let best = null;
-    for (const w of SIZE_SCALE) {
-      if (w > wCap || w < 80) continue;
-      for (const h of SIZE_SCALE) {
-        if (h > hCap || h < 96) continue;
-        const err = Math.abs(h / w - r) / r;
-        if (err <= tol) {
-          const a = w * h;
-          if (!best || a > best.a || (a === best.a && err < best.err)) best = { w, h, a, err };
-        }
-      }
-    }
-    if (best) return { width: best.w, height: best.h };
-  }
-  return null;
-}
-
-// Caja grande para ventanas medianas/anchas (celular horizontal, TV):
-// se prioriza el área (página grande, casi sin márgenes) aceptando una
-// tolerancia de proporción algo mayor (el recorte que causa es mínimo).
-function pageBig(r) {
-  if (!isFinite(r) || r <= 0) return null;
-  let best = null;
-  for (const w of SIZE_SCALE) {
-    if (w < 240 || w > 640) continue;
-    for (const h of SIZE_SCALE) {
-      if (h < 320 || h > 640) continue;
-      const err = Math.abs(h / w - r) / r;
-      if (err > 0.12) continue;
-      const a = w * h;
-      if (!best || a > best.a) best = { w, h, a };
-    }
-  }
-  return best ? { width: best.w, height: best.h } : null;
-}
-
-// Cajas por página (devuelve un array: en vertical grande son dos nodos,
-// uno por tamaño). El Image de Kino no tiene modo «ajustar»: siempre rellena
-// su caja recortando (cover) y los anchos altos son solo los de su escala.
-// - compact (teléfono vertical): caja exacta a la proporción real (sin recorte)
-// - medium/expanded (TV, celular horizontal): página GRANDE a 640 de ancho
-//   con proporción 2:3 cuando la página es vertical — llena la pantalla
-// ratioGuia: proporción mediana del capítulo; la usan las páginas que
-// no traen dimensiones (en vez de la caja genérica de siempre).
-// v1.4.2: fit "width" + aspect de la proporción medida (receta de
-// MangaTrack, Kino 0.9.81): la página toma el ancho completo de la caja
-// y el ALTO propio de su proporción real — la página vertical entera,
-// nunca recortada. fill true para que la caja sea el ancho de pantalla.
-function aspectDe(p, ratioGuia) {
-  const w = (p && p.w) || 0, h = (p && p.h) || 0;
-  let ratio = w > 0 && h > 0 ? h / w : (ratioGuia || 1.4);
-  if (!(ratio >= 0.2)) ratio = 0.2;
-  if (ratio > 5) ratio = 5;
-  return "1:" + (Math.round(ratio * 100) / 100);
-}
-
-function pageNodes(p, i, ratioGuia) {
+// (receta de MangaTrack, como ZonaTM0): las páginas ya no se miden.
+// Con fit "width" + aspect "2:3", Kino le da a cada página su
+// proporción real en cuanto la imagen carga — sin descargar cabeceras.
+function pageNodes(p, i) {
   return [{
     type: "Image", key: "p" + i, url: typeof p === "string" ? p : p.url,
     alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
-    fill: true, fit: "width", aspect: aspectDe(p, ratioGuia),
+    fill: true, fit: "width", aspect: "2:3",
     fallback: { type: "Column", padding: 16, children: [
       { type: "Text", text: "Página " + (i + 1), textEn: "Page " + (i + 1), color: "muted" } ] },
   }];
@@ -239,8 +217,23 @@ function pageNodes(p, i, ratioGuia) {
 // El listado completo no está en el HTML: Madara lo sirve por AJAX
 // (POST a /manga/<slug>/ajax/chapters/). Se usa el AJAX y, si falla,
 // lo que aparezca en el propio HTML de la página.
-async function loadSeries(slug) {
-  const html = await getHtml("/manga/" + slug + "/");
+// Con caché de 15 minutos (force=true la salta). Tope de MAX_CAPS
+// capítulos (los más recientes) para no pasar del límite de nodos.
+// Lo pesado se guarda en kino.storage («serie:<slug>»); del estado de
+// la pantalla solo viaja el meta.
+async function loadSeries(slug, force) {
+  if (!slugValido(slug)) throw kino.error("arguments", "slug");
+  const ck = "serie:" + slug;
+  if (!force) {
+    try {
+      const c = getJson(ck, null);
+      if (c && c.meta && Array.isArray(c.chapters) && c.chapters.length &&
+          Date.now() - (c.ts || 0) < 900000) {
+        return { slug, meta: c.meta, chapters: c.chapters };
+      }
+    } catch (e) { /* caché rota: se recarga */ }
+  }
+  const html = await getHtml("/manga/" + slug + "/", 60000);
   const meta = seriesMeta(html);
   let chapters = chapterList(html, slug);
   try {
@@ -255,120 +248,45 @@ async function loadSeries(slug) {
       if (ajax.length > chapters.length) chapters = ajax;
     }
   } catch (e) { kino.log("chapters", "ajax falló: " + e.message); }
+  let capped = false;
+  if (chapters.length > MAX_CAPS) {
+    chapters = chapters.slice(chapters.length - MAX_CAPS);
+    capped = true;
+  }
+  if (capped) meta.capped = true;
+  if (chapters.length) {
+    try {
+      setJson(ck, { meta, chapters, ts: Date.now() });
+      const ks = kino.storage.keys().filter((k) => k.indexOf("serie:") === 0);
+      if (ks.length > 10) for (const k of ks.slice(0, ks.length - 10)) kino.storage.remove(k);
+    } catch (e) { kino.log("cache", e.message); }
+  }
   return { slug, meta, chapters };
 }
 
-// ------------------------------------------------- medir páginas
-// Receta de MangaTrack: descargar solo los primeros bytes de cada
-// imagen (kino.fetch maxBytes) y leer sus dimensiones del encabezado
-// (JPEG/PNG/GIF). Así las páginas sin width/height en el HTML también
-// quedan medidas y la caja calza con su proporción real.
-function deB64(s) {
-  const ABC = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  const out = [];
-  let acc = 0, bits = 0;
-  for (let i = 0; i < s.length; i++) {
-    const v = ABC.indexOf(s.charAt(i));
-    if (v < 0) continue;
-    acc = (acc * 64) + v;
-    bits += 6;
-    if (bits >= 8) { bits -= 8; out.push((acc >> bits) & 0xFF); acc = acc % Math.pow(2, bits); }
-  }
-  return out;
+// capítulos de una obra desde kino.storage (sin caducidad: la lista
+// completa no viaja nunca en el estado de la pantalla, que tiene un
+// límite de tamaño). null si no está en caché.
+function chaptersDe(slug) {
+  if (!slugValido(slug)) return null;
+  const c = getJson("serie:" + slug, null);
+  return (c && Array.isArray(c.chapters)) ? c.chapters : null;
 }
 
-function dimsDeBytes(b) {
-  if (!Array.isArray(b) || b.length < 12) return null;
-  if (b[0] === 0xFF && b[1] === 0xD8) {
-    let i = 2;
-    while (i + 9 < b.length) {
-      if (b[i] !== 0xFF) { i++; continue; }
-      const m = b[i + 1];
-      if (m === 0x01 || (m >= 0xD0 && m <= 0xD9)) { i += 2; continue; }
-      const len = (b[i + 2] << 8) | b[i + 3];
-      if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) {
-        return { w: (b[i + 7] << 8) | b[i + 8], h: (b[i + 5] << 8) | b[i + 6] };
-      }
-      if (m === 0xDA) break;
-      i += 2 + len;
-    }
-    return null;
-  }
-  if (b[0] === 0x89 && b[1] === 0x50) {
-    return { w: (b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19],
-      h: (b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23] };
-  }
-  if (b[0] === 0x47 && b[1] === 0x49) return { w: b[6] | (b[7] << 8), h: b[8] | (b[9] << 8) };
-  return null;
-}
-
-function hashUrl(u) {
-  let h = 5381;
-  for (let i = 0; i < u.length; i++) h = ((h * 33) + u.charCodeAt(i)) >>> 0;
-  return ("0000000" + h.toString(16)).slice(-8);
-}
-
-function dimsTodas() { return getJson("dims", {}); }
-
-function dimPut(nuevos) {
+// Carga la obra para el detalle: si falla (web caída, sin red, tiempo
+// límite), deja la obra en estado de error — con botón «Reintentar».
+// Al estado solo va el meta — los capítulos quedan en kino.storage y
+// detailTree los lee de ahí.
+async function cargarDetalle(state, slug, force) {
+  const prev = (state.detail && state.detail.slug === slug) ? state.detail : null;
+  const meta0 = (prev && prev.meta) || {};
   try {
-    const all = dimsTodas();
-    for (let i = 0; i < nuevos.length; i++) all[nuevos[i][0]] = nuevos[i][1];
-    const ks = Object.keys(all);
-    if (ks.length > 300) for (let i = 0; i < ks.length - 300; i++) delete all[ks[i]];
-    setJson("dims", all);
-  } catch (e) { kino.log("dims", "guardar: " + e.message); }
-}
-
-async function dimsDeImagen(url) {
-  try {
-    const r = await kino.fetch(url, { maxBytes: 16384, timeoutMs: 5000 });
-    if (!r.ok) return null;
-    const d = dimsDeBytes(deB64(r.base64()));
-    return d && d.w > 0 && d.h > 0 ? d : null;
-  } catch (e) { return null; }
-}
-
-// Mide (con el caché primero) las páginas que vengan sin dimensiones,
-// en lotes de 12 y con tope de tiempo para no eternizar la apertura.
-async function medirImagenes(images, presupuesto) {
-  const t0 = Date.now();
-  const cache = dimsTodas();
-  const pend = [];
-  let listas = 0;
-  for (let i = 0; i < images.length; i++) {
-    const im = images[i];
-    if (im.w > 0 && im.h > 0) { listas++; continue; }
-    const c = cache[hashUrl(im.url)];
-    if (Array.isArray(c) && c[0] > 0 && c[1] > 0) { im.w = c[0]; im.h = c[1]; listas++; continue; }
-    pend.push(im);
+    const d = await loadSeries(slug, force);
+    return { state: { detail: { slug, meta: d.meta } } };
+  } catch (e) {
+    kino.log("detalle", e.message);
+    return { state: { detail: { slug, error: true, meta: meta0 } } };
   }
-  const nuevas = [];
-  let hechas = 0;
-  for (let i = 0; i < pend.length && hechas < 48; i += 12) {
-    if (Date.now() - t0 > (presupuesto || 6000)) break;
-    const lote = pend.slice(i, Math.min(pend.length, i + 12, i + 48 - hechas));
-    hechas += lote.length;
-    const rs = await Promise.all(lote.map((im) => dimsDeImagen(im.url).catch(() => null)));
-    for (let j = 0; j < lote.length; j++) {
-      if (rs[j]) {
-        lote[j].w = rs[j].w; lote[j].h = rs[j].h;
-        listas++;
-        nuevas.push([hashUrl(lote[j].url), [lote[j].w, lote[j].h]]);
-      }
-    }
-  }
-  if (nuevas.length) dimPut(nuevas);
-  return listas;
-}
-
-// Proporción mediana de las páginas medidas: la que usan las cajas de
-// las páginas sin dimensiones (receta de MangaTrack).
-function ratioGuiaDe(pages) {
-  const medidas = pages.filter((p) => p && p.w > 0 && p.h > 0).map((p) => p.h / p.w);
-  if (!medidas.length) return 0;
-  medidas.sort((a, b) => a - b);
-  return medidas[parseInt((medidas.length - 1) / 2, 10)];
 }
 
 // ------------------------------------------------------------ almacen
@@ -393,16 +311,32 @@ function markRead(slug, title, poster, chTitle, url) {
   syncPush("prog", p);
 }
 
-// ------------------------------------------------ sincronización (kino.shared)
-// Los favoritos y el progreso viajan entre los aparatos vinculados de la
-// persona: el teléfono escribe y la TV lee al abrir la pantalla (y al revés).
-// Los valores leídos NO son de confianza: otro aparato (quizá con otra
-// versión del plugin) los escribió, así que se valida cada campo.
+// quita UNA obra de «Seguir leyendo»/Historial
+function borrarProgreso(slug) {
+  const p = progress();
+  if (!p[slug]) return false;
+  delete p[slug];
+  setJson("prog", p);
+  syncPush("prog", p);
+  return true;
+}
+
+// vacía todo «Seguir leyendo»/Historial
+function borrarTodoProgreso() {
+  setJson("prog", {});
+  syncPush("prog", {});
+}
+
+// ---------------------------------------------- sincronización (kino.shared)
 
 function syncPush(key, val) {
   try {
     if (typeof kino.shared === "object" && kino.shared !== null) kino.shared.set(key, val);
   } catch (e) { kino.log("sync", e.message); }
+}
+
+function slugValido(s) {
+  return typeof s === "string" && /^[a-z0-9][a-z0-9-]*$/i.test(s) && s.indexOf("..") < 0;
 }
 
 function syncPull() {
@@ -415,8 +349,8 @@ function syncPull() {
       for (const f of local) have[f.slug] = true;
       let changed = false;
       for (const f of sf.slice(0, 200)) {
-        if (!f || typeof f !== "object" || typeof f.slug !== "string") continue;
-        if (!/^[a-z0-9][a-z0-9-]*$/.test(f.slug) || have[f.slug]) continue;
+        if (!f || typeof f !== "object" || !slugValido(f.slug)) continue;
+        if (have[f.slug]) continue;
         local.push({ slug: f.slug, title: String(f.title || f.slug).slice(0, 200),
           poster: typeof f.poster === "string" ? f.poster.slice(0, 500) : "" });
         have[f.slug] = true; changed = true;
@@ -428,7 +362,7 @@ function syncPull() {
       const p = progress();
       let changed = false;
       for (const k of Object.keys(sp).slice(0, 200)) {
-        if (!/^[a-z0-9][a-z0-9-]*$/.test(k)) continue;
+        if (!slugValido(k)) continue;
         const e = sp[k];
         if (!e || typeof e !== "object" || typeof e.url !== "string" || typeof e.ts !== "number") continue;
         if (p[k] && (p[k].ts || 0) >= e.ts) continue;
@@ -444,12 +378,24 @@ function syncPull() {
 }
 
 // caché de lector (últimos capítulos abiertos), para no volver a pedir
-function readerCache(url) { return getJson("rc:" + url, null); }function readerCachePut(url, images) {
+function readerCache(url) { return getJson("rc:" + url, null); }
+function readerCachePut(url, urls) {
   try {
     const keys = kino.storage.keys().filter((k) => k.indexOf("rc:") === 0);
     if (keys.length > 4) for (const k of keys.slice(0, keys.length - 4)) kino.storage.remove(k);
   } catch (e) { /* la app vieja no lista */ }
-  setJson("rc:" + url, images);
+  setJson("rc:" + url, urls);
+}
+
+// páginas de un capítulo (lista de URLs de imagen) — primero la caché
+// de storage, si no la red. Si no hay, [].
+async function paginasDe(ch) {
+  const c = readerCache(ch.url);
+  if (Array.isArray(c) && c.length) return c;
+  const html = await getHtml(ch.url.replace(BASE, ""), 30000);
+  const urls = readerImages(html).map((x) => x.url);
+  if (urls.length) readerCachePut(ch.url, urls);
+  return urls;
 }
 
 // ----------------------------------------------------------- interfaz
@@ -461,15 +407,7 @@ const TABS = [
   { value: "historial", label: "Historial", labelEn: "History" },
 ];
 
-// Una obra como tarjeta PROPIA (Card + Image), nunca un KinoItem: los
-// ítems de Kino son títulos de su catálogo de video (kind: "movie") y su
-// toque abría la obra como película en vez de mandarla al lector. El toque
-// de esta tarjeta manda el evento "openSeries", que CARGA la obra y la
-// entra como ruta EMPUJADA (route: { push: "detail" }): así el botón Atrás
-// de Kino retrocede de verdad (detalle -> pestañas) en vez de cerrar el
-// lienzo. En un riel horizontal la imagen lleva ancho fijo.
-// Título partido en dos filas: maxLines recorta en una sola línea y deja un
-// hueco; repartimos las palabras alrededor del centro del texto.
+// Título partido en dos filas
 function twoLines(t) {
   const s = (t || "").trim();
   if (s.length <= 26) return [s];
@@ -485,7 +423,21 @@ function twoLines(t) {
   return [a, b];
 }
 
+// Título/portada de las tarjetas vistas, para pintar el detalle al
+// instante (antes de que llegue la página de la obra).
+const CARDINFO = {};
+function rememberCard(it) {
+  try {
+    if (it && it.slug && CARDINFO[it.slug] === undefined) {
+      CARDINFO[it.slug] = { title: it.title || "", poster: it.poster || "" };
+      const ks = Object.keys(CARDINFO);
+      if (ks.length > 300) delete CARDINFO[ks[0]];
+    }
+  } catch (e) { /* sin memoria */ }
+}
+
 function posterCard(it, prefix, rail) {
+  rememberCard(it);
   const img = {
     type: "Image", url: it.poster || "", aspect: "2:3",
     alt: it.title, altEn: it.title,
@@ -494,7 +446,7 @@ function posterCard(it, prefix, rail) {
   };
   if (rail) img.width = 120;
   return {
-    type: "Card", key: prefix + it.slug, flush: true,
+    type: "Card", key: prefix + it.slug.replace(/[^a-z0-9]/gi, "-"), flush: true,
     onTap: { event: "openSeries", arg: it.slug },
     children: [img].concat(twoLines(it.title).map((ln) => (
       { type: "Text", text: ln, textEn: ln, style: "caption", padding: 8 }))),
@@ -504,10 +456,29 @@ function posterCard(it, prefix, rail) {
 const EMPTY_LIB = { type: "emptyState", icon: "list", title: "Nada por aquí todavía.", titleEn: "Nothing here yet." };
 const EMPTY_FAV = { type: "emptyState", icon: "heart", title: "Marca obras con el corazón para verlas aquí.", titleEn: "Mark works with the heart to see them here." };
 
+// Esqueletos (receta MangaTrack): lo que se pinta mientras los datos
+// llegan en segundo plano.
+let skelSeq = 0;
+function skelCard() {
+  return { type: "Card", key: "sk" + skelSeq++, flush: true, children: [
+    { type: "Skeleton", shape: "block", height: 180 },
+    { type: "Skeleton", shape: "line", padding: 8 },
+    { type: "Skeleton", shape: "line", padding: 8 },
+  ] };
+}
+
+function skelGridNode(n) {
+  const cards = [];
+  for (let i = 0; i < (n || 12); i++) cards.push(skelCard());
+  return {
+    type: "ListView", key: "skel",
+    columns: { compact: 3, medium: 4, expanded: 6 },
+    items: cards,
+  };
+}
+
 function titleGridOf(items, eventMore, loading, done, emptyNode) {
   if (!items || !items.length) return emptyNode || EMPTY_LIB;
-  // ListView con columns: rejilla perezosa (onEndReached para paginar) sin
-  // los KinoItem de video de titleGrid
   const list = {
     type: "ListView", key: "grid",
     columns: { compact: 3, medium: 4, expanded: 6 },
@@ -522,64 +493,56 @@ function titleGridOf(items, eventMore, loading, done, emptyNode) {
   return list;
 }
 
-function historyList() {
+// Historial con dos formas de borrar el «Seguir leyendo»: mantener
+// pulsada una entrada para quitar solo esa obra, y el botón «Borrar
+// todo» (pide confirmar con un segundo toque).
+function historyList(state) {
   const p = progress();
   const rows = Object.keys(p).map((slug) => ({ slug, p: p[slug] }))
     .sort((a, b) => b.p.ts - a.p.ts).slice(0, 50);
+  const conf = state && state.confBorrar === true;
   if (!rows.length) {
     return { type: "emptyState", icon: "schedule", title: "Todavía no has leído nada.", titleEn: "You have not read anything yet." };
   }
-  return {
-    type: "ListView", key: "hist",
-    items: rows.map((r) => ({
-      type: "ListTile", key: "h-" + r.slug,
+  const items = [{
+    type: "Row", key: "histHead", gap: 8, padding: 16,
+    children: [
+      { type: "Text", text: "Mantén pulsada una obra para quitarla del historial.",
+        textEn: "Long-press a work to remove it from history.",
+        style: "caption", color: "muted", flex: 1 },
+      { type: "ElevatedButton", key: "clearHist", icon: "delete",
+        labelText: conf ? "¿Seguro? Toca otra vez" : "Borrar todo",
+        labelTextEn: conf ? "Sure? Tap again" : "Clear all",
+        onPressed: { event: "clearHist" } },
+    ],
+  }];
+  for (const r of rows) {
+    items.push({
+      type: "ListTile", key: "h-" + r.slug.replace(/[^a-z0-9]/gi, "-"),
       title: r.p.title || r.slug,
       subtitle: r.p.chTitle || "", subtitleEn: r.p.chTitle || "",
       leading: { type: "CircleAvatar", image: r.p.poster, icon: "list" },
       onTap: { event: "openSeries", arg: r.slug },
-    })),
-  };
-}
-
-async function tabBody(state) {
-  const tab = state.tab || "inicio";
-  if (tab === "favoritos") return titleGridOf(favs(), null, false, true, EMPTY_FAV);
-  if (tab === "historial") return historyList();
-  if (tab === "biblioteca") {
-    const items = Array.isArray(state.libItems) ? state.libItems : await fetchLibrary(1);
-    return titleGridOf(items, "libMore", state.libLoading === true, state.libDone === true);
+      onLongPress: { event: "borrarProg", arg: r.slug },
+    });
   }
-  return await homeBody(state);
+  return { type: "ListView", key: "hist", items };
 }
 
-async function fetchLibrary(page) {
-  const html = await getHtml("/manga/page/" + page + "/");
-  return seriesCards(html, 36);
-}
-
-// ------------------------------------------------- géneros (v1.5.0, de ZonaTM0)
+// ------------------------------------------------- géneros (como ZonaTM0)
 
 // Las secciones del Inicio: géneros del sitio (slugs de yuri-online).
 const GENEROS_INICIO = [
-  { key: "romance", label: "Romance", labelEn: "Romance" },
-  { key: "drama", label: "Drama", labelEn: "Drama" },
+  { key: "accion", label: "Acción", labelEn: "Action" },
   { key: "comedia", label: "Comedia", labelEn: "Comedy" },
   { key: "fantasia", label: "Fantasía", labelEn: "Fantasy" },
-  { key: "accion", label: "Acción", labelEn: "Action" },
+  { key: "romance", label: "Romance", labelEn: "Romance" },
+  { key: "drama", label: "Drama", labelEn: "Drama" },
 ];
 
 // Tope de obras por sección en el estado (que viaja en la pantalla):
-// 13 al abrir + hasta 26 más con «Ver más» (páginas del sitio).
-const GENERO_MAX = 39;
-
-// Una página de un género: /manga-genre/<slug>/ (página 1) o
-// /manga-genre/<slug>/page/<n>/ para las siguientes.
-async function fetchGenero(slug, page) {
-  const path = page > 1 ? "/manga-genre/" + slug + "/page/" + page + "/"
-    : "/manga-genre/" + slug + "/";
-  const html = await getHtml(path);
-  return seriesCards(html, 20);
-}
+// 24 al abrir + hasta 24 más con «Ver más».
+const GENERO_MAX = 48;
 
 // Una sección por género: tarjetas + «Ver más» al final. «usados» es
 // el mapa compartido entre secciones: una obra que ya salió en una
@@ -620,29 +583,31 @@ function railGenero(state, g, usados) {
   ];
 }
 
-// Inicio: una fila de tarjetas de Kino con lo más reciente
-async function homeBody(state) {
-  let items = Array.isArray(state.inicioItems) ? state.inicioItems : null;
-  if (!items) {
-    const html = await getHtml("/");
-    items = seriesCards(html, 30);
+// El cuerpo de las pestañas ya NUNCA espera a la red. Pinta lo que
+// haya en el estado y, si falta, esqueletos: el temporizador
+// «cargarRoot» trae los datos en segundo plano.
+function tabBody(state) {
+  const tab = state.tab || "inicio";
+  if (tab === "favoritos") return titleGridOf(favs(), null, false, true, EMPTY_FAV);
+  if (tab === "historial") return historyList(state);
+  if (tab === "biblioteca") {
+    const items = Array.isArray(state.libItems) ? state.libItems : null;
+    if (!items) return skelGridNode(12);
+    return titleGridOf(items, "libMore", state.libLoading === true, state.libDone === true);
   }
-  // riel horizontal de tarjetas propias (sin titleRail: sus items son
-  // títulos de video de Kino)
+  // inicio
   const rail = (title, titleEn, key, list) => list.length ? [
     { type: "Text", text: title, textEn: titleEn, style: "h3", padding: 16 },
     { type: "SingleChildScrollView", key: key, direction: "horizontal", padding: 16,
       children: [{ type: "Row", gap: 8, children: list.slice(0, 60).map((it) => posterCard(it, key + "-", true)) }] },
   ] : [];
-  // obras empezadas (progreso), las más recientes primero: aparecen
-  // solas debajo de las últimas obras, sin tocar nada
   const prog = progress();
   const leyendo = Object.keys(prog)
     .map((slug) => ({ slug, title: prog[slug].title, poster: prog[slug].poster, ts: prog[slug].ts || 0 }))
     .filter((x) => x.title)
     .sort((a, b) => b.ts - a.ts)
     .slice(0, 20);
-  // v1.5.0: secciones por género, sin repetidos entre ellas
+  // secciones por género, sin repetidos entre ellas
   const usados = {};
   let secciones = [];
   for (const g of GENEROS_INICIO) secciones = secciones.concat(railGenero(state, g, usados));
@@ -650,19 +615,22 @@ async function homeBody(state) {
     type: "SingleChildScrollView", key: "home", flex: 1,
     children: [{
       type: "Column", children: [
-        // búsqueda siempre visible también desde Inicio (no solo la barra)
         { type: "ListTile", key: "searchTile", leading: { type: "Icon", name: "search" },
           title: "Buscar obra", titleEn: "Search a work",
           subtitle: "Por título, p. ej. Trash Flower", subtitleEn: "By title, e.g. Trash Flower",
           trailing: { type: "Icon", name: "arrow_forward" },
           onTap: { event: "goSearch" } },
-      // favoritos siempre a mano, debajo de las últimas obras
-      ].concat(rail("Últimas obras", "Latest works", "latest", items))
-        .concat(rail("Seguir leyendo", "Continue reading", "leyendo", leyendo))
+      ].concat(rail("Seguir leyendo", "Continue reading", "leyendo", leyendo))
         .concat(rail("Mis favoritos", "My favourites", "favs", favs()))
         .concat(secciones),
     }],
   };
+}
+
+// Biblioteca: todas las obras del sitio, paginadas
+async function fetchLibrary(page) {
+  const html = await getLibHtml(page, "", "");
+  return seriesCards(html, 36);
 }
 
 // ------------------------------------------------------------- rutas
@@ -679,78 +647,199 @@ function loadingTree(msg) {
   ] };
 }
 
+// Pantalla de error con reintentar: para fallos de red con tiempo límite
+function errorTree(msg, retryEvent, extra) {
+  const children = [
+    { type: "Icon", name: "error", color: "muted" },
+    { type: "Text", text: msg, textEn: msg, color: "muted", padding: { left: 16, right: 16 } },
+    { type: "ElevatedButton", icon: "refresh", labelText: "Reintentar", labelTextEn: "Retry",
+      onPressed: { event: retryEvent || "retry" } },
+  ];
+  if (extra) children.push(extra);
+  return { type: "Column", padding: 32, gap: 12, crossAxisAlignment: "center", children };
+}
+
+// Detalle mientras la obra llega en segundo plano: esqueletos de los
+// capítulos (receta MangaTrack) + temporizador «cargarSerie» + un
+// botón «Cargar ahora» por si el Kino del teléfono no tuviera
+// temporizadores de pantalla.
+function detailLoadingTree(d) {
+  const info = CARDINFO[d.slug] || {};
+  const title = (d.meta && d.meta.title) || info.title || d.slug;
+  const poster = (d.meta && d.meta.poster) || info.poster || "";
+  const rows = [];
+  for (let i = 0; i < 10; i++) {
+    rows.push({ type: "Skeleton", key: "skr" + i, shape: "line", padding: 12 });
+  }
+  return {
+    type: "Scaffold",
+    every: { ms: 1000, event: "cargarSerie" },
+    appBar: {
+      title: title,
+      leading: { type: "IconButton", key: "backHome", icon: "arrow_back",
+        labelText: "Atrás", labelTextEn: "Back",
+        onPressed: { event: "popBack" } },
+      actions: [],
+    },
+    body: { type: "SingleChildScrollView", key: "detailLoading", children: [
+      { type: "Column", children: [
+        { type: "Row", gap: 16, padding: 16, crossAxisAlignment: "start", stackOnNarrow: true,
+          children: [
+            poster ? { type: "Image", url: poster, width: { compact: 120, expanded: 160 },
+              aspect: "2:3", alt: title, fallback: { type: "Skeleton", shape: "block" } }
+              : { type: "Skeleton", shape: "block", width: { compact: 120, expanded: 160 } },
+            { type: "Column", gap: 6, flex: 2, crossAxisAlignment: "start", children: [
+              { type: "Text", text: title, style: "h2" },
+              { type: "Skeleton", shape: "line" },
+              { type: "Skeleton", shape: "line" },
+              { type: "Skeleton", shape: "line" },
+              { type: "Text", text: "Cargando capítulos…", textEn: "Loading chapters…",
+                color: "muted", style: "caption" },
+              { type: "ElevatedButton", key: "loadNow", icon: "download",
+                labelText: "Cargar ahora", labelTextEn: "Load now",
+                onPressed: { event: "cargarSerieAhora" } },
+            ] },
+          ] },
+        { type: "Skeleton", shape: "line", padding: 16 },
+      ].concat(rows) },
+    ] },
+  };
+}
+
+// la sinopsis, plegada si es larga, con botón para extenderla
+function sinopsisNode(state, overview) {
+  const o = overview || "";
+  const completa = state.sinopsisCompleta === true;
+  if (o.length <= 240 || completa) {
+    const children = [{ type: "Text", key: "sinopsisTxt", text: o, textEn: o, style: "p", color: "muted" }];
+    if (o.length > 240) {
+      children.push({ type: "TextButton", key: "sinMenos", icon: "expand_less",
+        labelText: "Menos", labelTextEn: "Less", onPressed: { event: "toggleSinopsis" } });
+    }
+    return { type: "Column", key: "sinopsis", gap: 4, crossAxisAlignment: "start", children: children };
+  }
+  return { type: "Column", key: "sinopsis", gap: 4, crossAxisAlignment: "start", children: [
+    { type: "Text", key: "sinopsisTxt",
+      text: o.slice(0, 240).trim() + "…", textEn: o.slice(0, 240).trim() + "…",
+      style: "p", color: "muted" },
+    { type: "TextButton", key: "sinMas", icon: "expand_more",
+      labelText: "Ver toda la sinopsis", labelTextEn: "Full synopsis",
+      onPressed: { event: "toggleSinopsis" } },
+  ] };
+}
+
 async function detailTree(state) {
   const d = state.detail;
   if (!d) return loadingTree();
+  if (d.loading) return detailLoadingTree(d);
   const fav = isFav(d.slug);
-  if (!Array.isArray(d.chapters) || !d.chapters.length) {
+  // la carga falló (web caída, sin red, tiempo límite agotado): se
+  // ofrece reintentar en vez del cargado eterno de antes
+  if (d.error) {
+    return errorTree("No se pudo cargar la obra. Comprueba tu conexión e inténtalo de nuevo.", "reloadSeries",
+      { type: "ElevatedButton", icon: "arrow_back", labelText: "Volver", labelTextEn: "Back",
+        onPressed: { event: "popBack" } });
+  }
+  // la lista de capítulos vive en kino.storage, no en el estado
+  // (las obras con muchos capítulos se pasaban del límite de tamaño
+  // del estado y rompían el lector).
+  const chapters = chaptersDe(d.slug) || [];
+  if (!chapters.length) {
     return { type: "Column", padding: 32, gap: 12, crossAxisAlignment: "center", children: [
       { type: "Icon", name: "error", color: "muted" },
       { type: "Text", text: "No se encontraron capítulos para esta obra.", textEn: "No chapters found for this work.", color: "muted" },
+      { type: "ElevatedButton", icon: "refresh", labelText: "Reintentar", labelTextEn: "Retry",
+        onPressed: { event: "reloadSeries" } },
       { type: "ElevatedButton", icon: "arrow_back", labelText: "Volver", labelTextEn: "Back",
         onPressed: { event: "popBack" } },
     ] };
   }
-  // Portada en caja 2:3 con ancho acotado: un póster casi siempre es 2:3,
-  // así la caja coincide con la imagen y no hay recorte (Image de Kino
-  // siempre rellena su caja recortando: sin caja exacta, siempre corta).
   const cover = d.meta.poster
     ? { type: "Image", url: d.meta.poster, width: { compact: 120, expanded: 160 },
         aspect: "2:3", alt: d.meta.title,
         fallback: { type: "Icon", name: "list" } }
     : { type: "Icon", name: "list" };
+  const pg = progress()[d.slug];
+  const pgIdx = pg && typeof pg.url === "string" ? chapters.findIndex((c) => c.url === pg.url) : -1;
+  // botones en dos filas limpias, sin huecos (como ZonaTM0):
+  //  - fila principal: Continuar/Empezar a todo el ancho
+  //  - fila secundaria compacta SOLO con iconos: Favoritos ·
+  //    Actualizar · Olvidar lo leído (solo si hay progreso)
+  const filaPrincipal = (function () {
+    if (pgIdx > 0) {
+      const contLabel = "Seguir · Cap. " + (chapters[pgIdx].num || (pgIdx + 1));
+      return { type: "ElevatedButton", key: "cont", icon: "play",
+        labelText: contLabel, labelTextEn: contLabel, flex: 1,
+        onPressed: { event: "read", arg: String(pgIdx) } };
+    }
+    return { type: "ElevatedButton", key: "start", icon: "play",
+      labelText: "Empezar a leer", labelTextEn: "Start reading",
+      flex: 1, onPressed: { event: "read", arg: "0" } };
+  })();
+  // fila secundaria SOLO con iconos (sin texto): el labelText queda
+  // como etiqueta accesible/mando de TV, no se dibuja.
+  const filaSecundaria = [
+    { type: "IconButton", key: "fav", icon: fav ? "heart" : "star",
+      labelText: fav ? "Quitar de favoritos" : "Añadir a favoritos",
+      labelTextEn: fav ? "Remove favourite" : "Add favourite",
+      onPressed: "fav" },
+    // Actualizar: salta el caché y trae los capítulos nuevos
+    { type: "IconButton", key: "refresh", icon: "refresh",
+      labelText: "Actualizar", labelTextEn: "Refresh",
+      onPressed: "reloadSeries" },
+  ];
+  if (pg) {
+    filaSecundaria.push({ type: "IconButton", key: "olvidar", icon: "delete",
+      labelText: "Olvidar lo leído", labelTextEn: "Forget read progress",
+      onPressed: { event: "borrarProg", arg: d.slug } });
+  }
   const head = {
     type: "Row", gap: 16, padding: 16, crossAxisAlignment: "start", stackOnNarrow: true,
     children: [
       cover,
       { type: "Column", gap: 6, flex: 2, crossAxisAlignment: "start", children: [
         { type: "Text", text: d.meta.title || d.slug, style: "h2" },
-        d.meta.type ? { type: "Text", text: d.meta.type, color: "muted" } : null,
-        d.meta.status ? { type: "Badge", text: d.meta.status } : null,
-        d.meta.adult ? { type: "Badge", text: "18+", color: "error" } : null,
-        d.meta.genres ? { type: "Text", text: "Géneros: " + d.meta.genres, textEn: "Genres: " + d.meta.genres, color: "muted", style: "caption" } : null,
-        { type: "Text", text: d.meta.overview, style: "p", color: "muted" },
-        {
-          type: "Row", gap: 8, wrap: true, children: [
-            (function () {
-              const pg = progress()[d.slug];
-              const ci = pg && typeof pg.url === "string" ? d.chapters.findIndex((c) => c.url === pg.url) : -1;
-              if (ci > 0) {
-                const contLabel = ("Continuar: " + (pg.chTitle || d.chapters[ci].title)).slice(0, 60);
-                return { type: "ElevatedButton", key: "cont", icon: "play",
-                  labelText: contLabel, labelTextEn: contLabel,
-                  onPressed: { event: "read", arg: String(ci) } };
-              }
-              return { type: "ElevatedButton", key: "start", icon: "play",
-                labelText: "Empezar a leer", labelTextEn: "Start reading",
-                onPressed: { event: "read", arg: "0" } };
-            })(),
-            { type: "ElevatedButton", key: "latest", icon: "expand_more",
-              labelText: "Leer lo último", labelTextEn: "Read latest",
-              onPressed: { event: "read", arg: String(d.chapters.length - 1) } },
-            { type: "ElevatedButton", key: "fav", icon: fav ? "heart" : "star",
-              labelText: fav ? "Quitar de favoritos" : "Añadir a favoritos",
-              labelTextEn: fav ? "Remove favourite" : "Add favourite",
-              onPressed: "fav" },
-          ],
-        },
+        d.meta.adult ? { type: "Badge", key: "adult", text: "18+" } : null,
+        d.meta.type ? { type: "Text", key: "tipo", text: d.meta.type, color: "muted" } : null,
+        d.meta.status ? { type: "Badge", key: "estado", text: d.meta.status } : null,
+        d.meta.genres ? { type: "Text", key: "generos", text: "Géneros: " + d.meta.genres, textEn: "Genres: " + d.meta.genres, color: "muted", style: "caption" } : null,
+        // sinopsis plegable
+        sinopsisNode(state, d.meta.overview),
+        // fila principal — leer, sin huecos
+        { type: "Row", key: "filaLeer", gap: 8, children: [filaPrincipal] },
+        // fila secundaria — gestión, sin huecos
+        { type: "Row", key: "filaGestion", gap: 8,
+          mainAxisAlignment: "center", children: filaSecundaria },
       ].filter(Boolean) },
     ],
   };
   const items = [head];
-  items.push({ type: "Text", text: d.chapters.length + " capítulos", textEn: d.chapters.length + " chapters", style: "h3", padding: 16 });
-  for (let i = 0; i < d.chapters.length; i++) {
-    const c = d.chapters[i];
+  // el contador de capítulos lleva a su derecha un conmutador que
+  // invierte el orden de la lista: «Desde lo último» (los nuevos
+  // arriba) o «Desde el principio» (el 1 arriba, lo de siempre).
+  const desdeFinal = state.ordenCaps === "desc";
+  items.push({ type: "Row", key: "filaOrden", gap: 8, padding: 16, crossAxisAlignment: "center", children: [
+    { type: "Text", flex: 1,
+      text: chapters.length + " capítulos" + (d.meta.capped ? " (mostrando los " + MAX_CAPS + " más recientes)" : ""),
+      textEn: chapters.length + " chapters", style: "h3" },
+    { type: "TextButton", key: "ordenBtn", icon: "expand_more",
+      labelText: desdeFinal ? "Desde el principio" : "Desde lo último",
+      labelTextEn: desdeFinal ? "From the first" : "From the latest",
+      onPressed: { event: "ordenCaps" } },
+  ] });
+  // la lista se pinta según el orden elegido; el índice que se pasa a
+  // «read» es siempre el de la lista ORIGINAL.
+  const lista = desdeFinal ? chapters.slice().reverse() : chapters;
+  const idxDe = (i) => desdeFinal ? String(chapters.length - 1 - i) : String(i);
+  for (let i = 0; i < lista.length; i++) {
+    const c = lista[i];
     items.push({
       type: "ListTile", key: "ch" + i, dense: true,
       title: c.title,
-      onTap: { event: "read", arg: String(i) },
+      onTap: { event: "read", arg: idxDe(i) },
       trailing: { type: "Icon", name: "arrow_forward" },
     });
   }
-  // El detalle siempre llega como ruta empujada (desde una tarjeta, Historial
-  // o búsqueda); Atrás (el de Kino o el del AppBar) saca esa ruta y vuelve a
-  // las pestañas con su estado.
   return {
     type: "Scaffold",
     appBar: {
@@ -764,18 +853,10 @@ async function detailTree(state) {
   };
 }
 
-// contador de navegación entre capítulos: cada visita tiene su propia
-// clave de scroll, así el lector siempre arranca en la primera página
+// contador de navegación entre capítulos
 let navSeq = 0;
 
-// Lector webcómic: las páginas una bajo la otra en un único scroll
-// vertical. Cada página va en una caja del mismo ancho×alto (en dp) que su
-// proporción real: el componente Image de Kino no tiene modo «ajustar»
-// (siempre rellena la caja recortando), así que la caja debe calzar con
-// la página para que se vea entera.
-// Modo páginas (Kino 0.9.81, receta de MangaTrack): el widget "pages"
-// solo existe si kino.screen.widgets lo anuncia; con un Kino anterior
-// el lector sigue siendo la tira vertical de siempre.
+// Modo páginas (Kino 0.9.81, receta de MangaTrack)
 function pagesDisponible() {
   try {
     return typeof kino === "object" && kino !== null &&
@@ -789,31 +870,88 @@ function modoLectorPref() {
   return getJson("modoLector", "tira") === "paginas" ? "paginas" : "tira";
 }
 
-// El modo páginas solo procede con el widget disponible y un capítulo
-// de 2 a 250 páginas (los límites del widget con progress "bar").
 function modoLectorEfectivo(n) {
   const puede = pagesDisponible() && n >= 2 && n <= 250;
   return puede && modoLectorPref() === "paginas" ? "paginas" : "tira";
 }
 
-// Una página del modo páginas: fit "width" + aspect medido (página
-// vertical entera a ancho completo, sin recortes) dentro de un scroll
-// con zoom. Sin fallback: con 250 páginas el árbol superaría los 600
-// nodos por pantalla que admite Kino.
-function paginaFit(p, i, ratioGuia) {
+function paginaFit(p, i) {
   return { type: "SingleChildScrollView", key: "z" + i, zoom: true, children: [
     { type: "Image", key: "p" + i, url: typeof p === "string" ? p : p.url,
       alt: "Página " + (i + 1), altEn: "Page " + (i + 1),
-      fill: true, fit: "width", aspect: aspectDe(p, ratioGuia) } ] };
+      fill: true, fit: "width", aspect: "2:3" } ] };
+}
+
+// barra fina SOLO para el modo páginas (no hay final de tira donde
+// poner la tarjeta). Una sola fila, sin duplicados: Volver ·
+// Anterior · Siguiente.
+function barraPaginas(r, chapters) {
+  return {
+    type: "Card", key: "panelLectura", margin: 8, padding: 8, gap: 8,
+    children: [
+      { type: "Row", gap: 8, children: [
+        { type: "IconButton", key: "pbBack", icon: "arrow_back",
+          labelText: "Volver al detalle", labelTextEn: "Back to details",
+          onPressed: { event: "popBack" } },
+        { type: "ElevatedButton", key: "pbPrev", icon: "arrow_back",
+          labelText: "Anterior", labelTextEn: "Previous",
+          onPressed: "prevChap", flex: 1 },
+        { type: "ElevatedButton", key: "pbNext", icon: "arrow_forward",
+          labelText: "Siguiente", labelTextEn: "Next",
+          onPressed: "nextChap", flex: 1 },
+      ] },
+      { type: "Text", key: "lblPos",
+        text: "Capítulo " + (r.idx + 1) + " de " + chapters.length,
+        textEn: "Chapter " + (r.idx + 1) + " of " + chapters.length,
+        style: "caption", color: "muted" },
+    ],
+  };
+}
+
+// la ÚNICA barra de navegación del lector — la tarjeta al final del
+// capítulo. «Volver al detalle» arriba, «Anterior» y «Siguiente»
+// (siempre activos; en los extremos, el evento avisa con un toast) a
+// partes iguales, y el cambio de modo si tu Kino admite el modo
+// páginas.
+function finCapituloNode(r, chapters, modo) {
+  const children = [
+    { type: "Row", gap: 8, children: [
+      { type: "IconButton", key: "finBack", icon: "arrow_back",
+        labelText: "Volver al detalle", labelTextEn: "Back to details",
+        onPressed: { event: "popBack" } },
+      { type: "Text", key: "finTitulo",
+        text: "Capítulo " + (r.idx + 1) + " de " + chapters.length,
+        textEn: "Chapter " + (r.idx + 1) + " of " + chapters.length,
+        style: "caption", color: "muted", flex: 1 },
+    ] },
+    { type: "Row", gap: 12, children: [
+      { type: "ElevatedButton", key: "finPrev", icon: "arrow_back",
+        labelText: "Anterior", labelTextEn: "Previous",
+        onPressed: "prevChap", flex: 1 },
+      { type: "ElevatedButton", key: "finNext", icon: "arrow_forward",
+        labelText: "Siguiente", labelTextEn: "Next",
+        onPressed: "nextChap", flex: 1 },
+    ] },
+  ];
+  if (pagesDisponible()) {
+    children.push({ type: "Row", gap: 8, mainAxisAlignment: "center", children: [
+      { type: "TextButton", key: "finModo",
+        labelText: modo === "paginas" ? "Modo páginas" : "Modo tira",
+        labelTextEn: modo === "paginas" ? "Page mode" : "Strip mode",
+        onPressed: "modoLector" },
+    ] });
+  }
+  return { type: "Card", key: "finCap", margin: 16, padding: 12, gap: 8, children };
 }
 
 async function readerTree(state) {
   const r = state.reader;
   if (!r) return loadingTree();
-  const pages = r.images || [];
-  const chapters = Array.isArray(r.chapters) ? r.chapters : [];
+  // el lector en el estado es mínimo (slug, índice y páginas); la
+  // lista de capítulos se lee de kino.storage.
+  const pages = Array.isArray(r.imgs) ? r.imgs : [];
+  const chapters = chaptersDe(r.slug) || [];
   const ch = chapters[r.idx];
-  // estado corrupto o capítulo que ya no existe: mensaje claro en vez de error
   if (!ch || !pages.length) {
     return { type: "Column", padding: 32, gap: 12, crossAxisAlignment: "center", children: [
       { type: "Icon", name: "error", color: "muted" },
@@ -822,82 +960,36 @@ async function readerTree(state) {
         onPressed: { event: "popBack" } },
     ] };
   }
-  const hasNext = r.idx + 1 < chapters.length;
-  const hasPrev = r.idx > 0;
-  // clave única por capítulo: al cambiar de capítulo el scroll es un
-  // componente nuevo y arranca desde arriba (no hereda la posición anterior)
-  const chKey = String(ch ? ch.url : r.idx).replace(/[^a-z0-9]/gi, "").slice(-16);
-  // clave única por visita (r.tk cambia en cada cambio de capítulo): el
-  // scroll siempre arranca desde la primera página
+  const chKey = String(ch.url).replace(/[^a-z0-9]/gi, "").slice(-16);
   const scrollKey = "pages-" + r.idx + "-" + chKey + "-" + (r.tk || 0);
-  const ratioGuia = ratioGuiaDe(pages);
   const modo = modoLectorEfectivo(pages.length);
-  // Modo pantalla completa (inmersivo): oculta la barra de arriba y los
-  // botones de abajo; queda un botoncito flotante discreto (el mismo ojo)
-  // para traerlos de vuelta. La preferencia vive en el almacén ("lectorInm").
-  const inm = getJson("lectorInm", 0) ? true : false;
+  // el lector es SIEMPRE pantalla completa (como ZonaTM0 v1.1.6) — sin
+  // barra propia (queda la de Kino con Cerrar/Atrás), sin botón
+  // flotante y sin panel inferior. La navegación vive en la tarjeta
+  // del final.
   const body = [];
   if (modo === "paginas") {
-    // Modo páginas: una página a la vez, se pasa con el dedo, barra de
-    // progreso de Kino y zoom por pellizco. La página actual vive en
-    // state.inputs.pgs (la posición la guarda el evento pgChanged).
     body.push({
       type: "pages", key: "pgs", flex: 1, progress: "bar", onPageChanged: "pgChanged",
-      children: pages.map((p, i) => paginaFit(p, i, ratioGuia)),
+      children: pages.map((p, i) => paginaFit(p, i)),
     });
+    body.push(barraPaginas(r, chapters));
   } else {
-    // Tira vertical de siempre: páginas pegadas a ancho completo, ahora
-    // con zoom de pellizco en todo el capítulo.
     body.push({
       type: "SingleChildScrollView", key: scrollKey, flex: 1, zoom: true,
       children: [{
         type: "Column", gap: 4, crossAxisAlignment: "center", fill: true,
-        children: pages.flatMap((p, i) => pageNodes(p, i, ratioGuia)),
+        children: pages.flatMap((p, i) => pageNodes(p, i))
+          // la tarjeta del final es la ÚNICA barra de navegación —
+          // «Anterior»/«Siguiente» aparecen una sola vez.
+          .concat([finCapituloNode(r, chapters, modo)]),
       }],
     });
   }
-  if (!inm) body.push({
-    type: "Row", gap: 12, padding: 16, mainAxisAlignment: "center", wrap: true, children: [
-      { type: "ElevatedButton", icon: "arrow_back", labelText: "Anterior", labelTextEn: "Previous",
-        onPressed: "prevChap", enabled: hasPrev },
-      { type: "DropdownButton", key: "jumpChap", labelText: "Ir a capítulo", labelTextEn: "Go to chapter",
-        value: String(r.idx), onChanged: "jumpChap",
-        options: chapters.length
-          ? chapters.map((c, i) => ({ value: String(i), label: c.title }))
-          : [{ value: "0", label: "—" }] },
-      { type: "ElevatedButton", labelText: hasNext ? "Siguiente" : "Último capítulo",
-        labelTextEn: hasNext ? "Next" : "Last chapter",
-        icon: "arrow_forward", onPressed: "nextChap", enabled: hasNext },
-    ].concat(pagesDisponible() ? [
-      { type: "TextButton", key: "btnModo", labelText: modo === "paginas" ? "Modo tira" : "Modo páginas",
-        labelTextEn: modo === "paginas" ? "Strip mode" : "Page mode", onPressed: "modoLector" },
-    ] : []).concat([
-      { type: "TextButton", key: "btnPantalla", icon: "visibility",
-        labelText: "Pantalla completa", labelTextEn: "Fullscreen", onPressed: "lectorInm" },
-      { type: "Text",
-        text: "cap. " + (r.idx + 1) + " de " + chapters.length + " · pellizca para acercar",
-        textEn: "ch. " + (r.idx + 1) + " of " + chapters.length, style: "caption", color: "muted" },
-    ]),
-  });
-  const raiz = {
+  return {
     type: "Scaffold",
-    appBar: inm ? undefined : { type: "AppBar", mergeWithKinoBar: true, dense: true, key: "barReader",
-      title: ch ? ch.title : "Leyendo",
-      leading: { type: "IconButton", key: "backFromReader", icon: "arrow_back",
-        labelText: "Atrás", labelTextEn: "Back",
-        onPressed: { event: "popBack" } },
-      actions: [
-        { type: "IconButton", key: "verBarra", icon: "visibility",
-          labelText: "Pantalla completa (ocultar botones)", labelTextEn: "Fullscreen (hide buttons)",
-          onPressed: { event: "lectorInm" } },
-      ] },
     body: { type: "Column", children: body },
   };
-  // En pantalla completa solo queda el botoncito flotante para volver.
-  if (inm) raiz.floatingActionButton = { type: "FloatingActionButton", key: "verBarras",
-    icon: "visibility", tooltip: "Mostrar botones", tooltipEn: "Show buttons",
-    onPressed: { event: "lectorInm" } };
-  return raiz;
 }
 
 async function searchTree(state) {
@@ -933,26 +1025,22 @@ export async function screen({ state, route }) {
   try {
     if (r.name === "detail") {
       const slug = routeSlug(r);
-      if (!state.detail || state.detail.slug !== slug) return loadingTree();
+      if (!state.detail || state.detail.slug !== slug) {
+        // el detalle del estado no es el de esta ruta; se pinta la
+        // vista de esqueletos y el temporizador corrige el estado.
+        return detailLoadingTree(detailLoadingDe(slug));
+      }
       return await detailTree(state);
     }
     if (r.name === "read") return await readerTree(state);
     if (r.name === "search") return searchTree(state);
   } catch (e) {
-    return {
-      type: "Column", padding: 16, gap: 8, children: [
-        { type: "Icon", name: "error", color: "muted" },
-        { type: "Text", text: "No se pudo cargar (" + (e.code || "error") + ").", textEn: "Could not load (" + (e.code || "error") + ").", color: "muted" },
-        { type: "ElevatedButton", icon: "refresh", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "retry" } },
-      ],
-    };
+    return errorTree("No se pudo cargar (" + (e.code || "error") + ").", "retry");
   }
-  // ruta raíz: pestañas
-  const body = await tabBody(state);
+  // ruta raíz: pestañas. Se pintan AL INSTANTE (caché o esqueletos) y
+  // el temporizador «cargarRoot» trae lo que falte en segundo plano.
   return {
     type: "Scaffold",
-    // v1.5.0: las secciones de género del Inicio llegan en segundo
-    // plano, una por tick — la pantalla nunca se queda esperando.
     every: { ms: 1500, event: "cargarRoot" },
     appBar: {
       title: "Yuri Online",
@@ -964,8 +1052,24 @@ export async function screen({ state, route }) {
         value: state.tab || "inicio", onChanged: { event: "tab" },
       },
     },
-    body,
+    body: tabBody(state),
   };
+}
+
+// El detalle en carga: arranca en segundo plano y evita que dos cargas
+// se pisen (temporizador + botón «Cargar ahora»).
+let serieEnCarga = null;
+
+// la obra que se está viendo AHORA. Un tick del temporizador que
+// termine de cargar una obra anterior ya no debe sobrescribir el
+// detalle: se compara contra esta variable al terminar la carga.
+let slugDetalleActivo = null;
+
+function detailLoadingDe(slug) {
+  const info = CARDINFO[slug] || {};
+  slugDetalleActivo = slug;
+  return { slug, loading: true,
+    meta: { title: info.title || "", poster: info.poster || "" } };
 }
 
 export async function screenEvent(ev) {
@@ -973,47 +1077,98 @@ export async function screenEvent(ev) {
   const state = ev.state || {};
   try {
     if (name === "open") {
-      // primer evento reservado: al abrir la pantalla de detalle carga la obra
-      // y, de paso, se trae lo que los otros aparatos hayan guardado
       syncPull();
       const r = ev.route || {};
       if (r.name === "detail") {
         const slug = routeSlug(r);
-        if (slug && /^[a-z0-9][a-z0-9-]*$/.test(slug) && (!state.detail || state.detail.slug !== slug)) {
-          const d = await loadSeries(slug);
-          if (!d.chapters.length) return { toast: "No se encontraron capítulos." };
-          return { state: { detail: d } };
+        if (slug && slugValido(slug) && (!state.detail || state.detail.slug !== slug)) {
+          // no se bloquea; el detalle se pinta ya con esqueletos y el
+          // temporizador «cargarSerie» trae los capítulos.
+          return { state: { detail: detailLoadingDe(slug) } };
         }
       }
       return null;
     }
     if (name === "tab") {
-      const tab = ev.value;
-      const patch = { tab };
-      if (tab === "biblioteca" && !Array.isArray(state.libItems)) {
-        patch.libItems = await fetchLibrary(1);
-        patch.libPage = 1;
-      }
-      return { state: patch };
+      // cambiar de pestaña no espera a la red; si falta la lista, el
+      // temporizador la trae.
+      return { state: { tab: ev.value } };
     }
-    // temporizador de la raíz: trae UNA sección de género por tick
-    // (v1.5.0, receta de ZonaTM0: nada bloquea la pantalla)
+    // temporizador de la raíz: trae Inicio/Biblioteca en segundo plano
     if (name === "cargarRoot") {
-      if ((state.tab || "inicio") !== "inicio") return null;
-      const cats = state.cats || {};
-      for (const g of GENEROS_INICIO) {
-        if (cats[g.key]) continue;
-        let items = [];
+      const tab = state.tab || "inicio";
+      if (tab === "biblioteca" && !Array.isArray(state.libItems)) {
         try {
-          items = (await fetchGenero(g.key, 1))
-            .map((x) => ({ slug: x.slug, poster: x.poster, title: x.title }));
-        } catch (e) { /* sección vacía; queda como cargada */ }
-        return { state: { cats: Object.assign({}, cats, { [g.key]: { items, page: 1 } }) } };
+          const items = await fetchLibrary(1);
+          return { state: { libItems: items, libPage: 1, libDone: items.length < 36 } };
+        } catch (e) { return { state: { libItems: [], libError: true } }; }
+      }
+      if (tab === "inicio") {
+        // UNA sección por tick — la pantalla nunca se bloquea
+        const cats = state.cats || {};
+        for (const g of GENEROS_INICIO) {
+          if (!cats[g.key]) {
+            let items = [];
+            try {
+              items = seriesCards(await getLibHtml(1, "", "", g.key), 24)
+                .map((x) => ({ slug: x.slug, poster: x.poster, title: x.title }));
+            } catch (e) { /* sección vacía; quedará como cargada */ }
+            return { state: { cats: Object.assign({}, cats, { [g.key]: { items, page: 1 } }) } };
+          }
+        }
+        return null;
       }
       return null;
     }
+    // temporizador del detalle: carga la obra en segundo plano
+    if (name === "cargarSerie" || name === "cargarSerieAhora") {
+      const d = state.detail;
+      if (!d) return null;
+      // autocuración — si el detalle del estado no es el que se está
+      // viendo (quedó el de la obra anterior), se corrige aquí y el
+      // siguiente tick la carga.
+      if (slugDetalleActivo && d.slug !== slugDetalleActivo) {
+        return { state: { detail: detailLoadingDe(slugDetalleActivo) } };
+      }
+      if (!d.loading) return null;
+      if (serieEnCarga === d.slug && name === "cargarSerie") return null;
+      serieEnCarga = d.slug;
+      slugDetalleActivo = d.slug;
+      try {
+        // refresh=true salta el caché (botón «Actualizar»/«Reintentar»)
+        const res = await cargarDetalle(state, d.slug, d.refresh === true);
+        // mientras cargaba esta obra se abrió otra — el resultado ya
+        // no vale y NO se aplica.
+        if (slugDetalleActivo !== d.slug) return null;
+        return res;
+      } finally {
+        serieEnCarga = null;
+      }
+    }
+    if (name === "libMore") {
+      const page = (state.libPage || 1) + 1;
+      const more = await fetchLibrary(page);
+      let merged = (state.libItems || []).concat(more.filter((x) => !(state.libItems || []).some((y) => y.slug === x.slug)));
+      if (merged.length > LIB_MAX) merged = merged.slice(0, LIB_MAX);
+      return { state: { libItems: merged, libPage: page, libDone: more.length < 36 || merged.length >= LIB_MAX } };
+    }
+    if (name === "goSearch") return { route: { push: "search" } };
+    if (name === "popBack") return { route: { pop: true } };
+    if (name === "search") {
+      const q = String(ev.value && ev.value.q || "").trim();
+      if (!q) return { toast: "Escribe un título." };
+      const html = await getLibHtml(1, "", q);
+      // los resultados vienen tras la barra de orden (m_orderby); antes
+      // está el carrusel popular de la portada, que no debe mezclarse
+      // con los resultados
+      const cut = html.indexOf("m_orderby");
+      const results = seriesCards(cut >= 0 ? html.slice(cut) : html, 40);
+      return { state: { results, resultsQ: q },
+        toast: results.length ? results.length + " resultados" : "Sin resultados" };
+    }
+    if (name === "retry") return { state: { _r: Date.now() } };
     // «Ver más» al final de una sección de género — trae la página
-    // siguiente de ese género y la añade a la sección
+    // siguiente de ese género y la añade a la sección.
     if (name === "verMas") {
       const key = String(ev.arg || "");
       const g = GENEROS_INICIO.find((x) => x.key === key);
@@ -1022,38 +1177,61 @@ export async function screenEvent(ev) {
       if (!g || !cat) return null;
       if (cat.items.length >= GENERO_MAX) return { toast: "La sección ya está completa" };
       const page = (cat.page || 1) + 1;
-      let more = [];
-      try { more = await fetchGenero(key, page); } catch (e) { /* sin red */ }
-      const vistos = {};
-      for (const it of cat.items) vistos[it.slug] = true;
-      const nuevos = more.filter((it) => !vistos[it.slug])
-        .map((x) => ({ slug: x.slug, poster: x.poster, title: x.title }));
-      if (!nuevos.length) return { toast: "No hay más obras de " + g.label };
-      let merged = cat.items.concat(nuevos);
-      if (merged.length > GENERO_MAX) merged = merged.slice(0, GENERO_MAX);
-      return { state: { cats: Object.assign({}, cats, { [key]: { items: merged, page } }) },
-        toast: "+" + nuevos.length + " en " + g.label };
+      try {
+        const more = seriesCards(await getLibHtml(page, "", "", key), 24)
+          .map((x) => ({ slug: x.slug, poster: x.poster, title: x.title }));
+        const vistos = {};
+        for (const it of cat.items) vistos[it.slug] = true;
+        const nuevos = more.filter((it) => !vistos[it.slug]);
+        if (!nuevos.length) return { toast: "No hay más obras de " + g.label };
+        let merged = cat.items.concat(nuevos);
+        if (merged.length > GENERO_MAX) merged = merged.slice(0, GENERO_MAX);
+        return { state: { cats: Object.assign({}, cats, { [key]: { items: merged, page } }) },
+          toast: "+" + nuevos.length + " en " + g.label };
+      } catch (e) {
+        return { toast: "No se pudo cargar más. Inténtalo otra vez." };
+      }
     }
-    if (name === "libMore") {
-      const page = (state.libPage || 1) + 1;
-      const more = await fetchLibrary(page);
-      const merged = (state.libItems || []).concat(more.filter((x) => !(state.libItems || []).some((y) => y.slug === x.slug)));
-      return { state: { libItems: merged, libPage: page, libDone: more.length < 12 } };
+    // plegar/desplegar la sinopsis del detalle
+    if (name === "toggleSinopsis") {
+      return { state: { sinopsisCompleta: state.sinopsisCompleta !== true } };
     }
-    if (name === "goSearch") return { route: { push: "search" } };
-    if (name === "popBack") return { route: { pop: true } };
-    if (name === "search") {
-      const q = String(ev.value && ev.value.q || "").trim();
-      if (!q) return { toast: "Escribe un título." };
-      const html = await getHtml("/?s=" + encodeURIComponent(q) + "&post_type=wp-manga");
-      // los resultados vienen tras la barra de orden (m_orderby); antes está el
-      // carrusel popular de la portada, que no debe mezclarse con los resultados
-      const cut = html.indexOf("m_orderby");
-      const results = seriesCards(cut >= 0 ? html.slice(cut) : html, 30);
-      return { state: { results, resultsQ: q },
-        toast: results.length ? results.length + " resultados" : "Sin resultados" };
+    // invertir el orden de la lista de capítulos del detalle
+    if (name === "ordenCaps") {
+      const nuevo = state.ordenCaps === "desc" ? "asc" : "desc";
+      return { state: { ordenCaps: nuevo },
+        toast: nuevo === "desc" ? "Mostrando desde lo último" : "Mostrando desde el principio" };
     }
-    if (name === "retry") return { state: { _r: Date.now() } };
+    // quitar UNA obra de «Seguir leyendo»/Historial (botón «Olvidar
+    // lo leído» del detalle o pulsación larga en Historial)
+    if (name === "borrarProg") {
+      let slug = String(ev.arg || "");
+      if (!slug && state.detail) slug = state.detail.slug;
+      if (!slugValido(slug)) return null;
+      if (!borrarProgreso(slug)) return null;
+      return { state: { _r: Date.now() },
+        toast: "Quitada de «Seguir leyendo»" };
+    }
+    // vaciar TODO «Seguir leyendo»/Historial (dos toques para
+    // confirmar; el primero solo cambia el texto del botón)
+    if (name === "clearHist") {
+      if (!state.confBorrar) {
+        return { state: { confBorrar: true },
+          toast: "Toca otra vez para borrar TODO el historial" };
+      }
+      borrarTodoProgreso();
+      return { state: { confBorrar: false },
+        toast: "Historial y «Seguir leyendo» borrados" };
+    }
+    // Reintentar / Actualizar en el detalle: vuelve a la vista de
+    // esqueletos (sin bloquear) y el temporizador recarga saltando el
+    // caché (refresh=true).
+    if (name === "reloadSeries") {
+      const d = state.detail;
+      if (!d) return null;
+      return { state: { detail: { slug: d.slug, loading: true, refresh: true,
+        meta: d.meta || {} } } };
+    }
     if (name === "fav") {
       const d = state.detail;
       if (!d) return null;
@@ -1066,42 +1244,35 @@ export async function screenEvent(ev) {
       syncPush("favs", f);
       return { toast: added ? "Añadida a favoritos" : "Quitada de favoritos" };
     }
-    if (name === "read" || name === "nextChap" || name === "prevChap" || name === "jumpChap") {
+    if (name === "read" || name === "nextChap" || name === "prevChap") {
+      // la lista de capítulos ya no viaja en el estado; se lee de
+      // kino.storage. «Anterior» y «Siguiente» siempre activos — si
+      // no hay más capítulo en esa dirección, se avisa con un toast.
       let chapters, idx, slug, title, poster;
       if (name === "read") {
         const d = state.detail;
         if (!d) return null;
-        chapters = d.chapters;
+        chapters = chaptersDe(d.slug) || [];
         idx = parseInt(String(ev.arg || "0"), 10) || 0;
         slug = d.slug; title = d.meta.title; poster = d.meta.poster;
         if (idx < 0 || idx >= chapters.length) return null;
       } else {
         const r = state.reader;
         if (!r) return null;
-        chapters = r.chapters;
-        idx = name === "jumpChap"
-          ? parseInt(String(ev.value || "0"), 10) || 0
-          : r.idx + (name === "nextChap" ? 1 : -1);
+        chapters = chaptersDe(r.slug) || [];
+        idx = r.idx + (name === "nextChap" ? 1 : -1);
         slug = r.slug; title = r.title; poster = r.poster;
-        if (idx < 0 || idx >= chapters.length) return null;
+        if (idx >= chapters.length) return { toast: "Ya estás en el último capítulo" };
+        if (idx < 0) return { toast: "Ya estás en el primer capítulo" };
       }
       const ch = chapters[idx];
-      let images = readerCache(ch.url);
-      if (!images) {
-        const html = await getHtml(ch.url.replace(BASE, ""));
-        images = readerImages(html);
-        if (images.length) readerCachePut(ch.url, images);
-      }
+      const images = await paginasDe(ch);
       if (!images.length) return { toast: "No se encontraron páginas en este capítulo." };
-      // Medir las páginas sin dimensiones (cabeceras de imagen por
-      // descarga parcial, con caché): así ninguna caja recorta.
-      try { await medirImagenes(images, 6000); } catch (e) { kino.log("dims", e.message); }
+      // estado del lector mínimo — sin lista de capítulos.
       markRead(slug, title, poster, ch.title, ch.url);
-      const reader = { slug, title, poster, chapters, idx, images, tk: ++navSeq };
+      const reader = { slug, title, poster, idx, chUrl: ch.url, imgs: images, tk: ++navSeq };
       const resp = { state: { reader } };
       if (name === "read") resp.route = { push: "read" };
-      // Modo páginas: retomar en la página donde quedó este capítulo
-      // (la receta de las docs: un set de ui sobre la key del pages).
       if (modoLectorEfectivo(images.length) === "paginas") {
         let at = parseInt(getJson("pg:" + ch.url, 0), 10);
         if (!(at >= 0) || at >= images.length) at = 0;
@@ -1109,13 +1280,9 @@ export async function screenEvent(ev) {
       }
       return resp;
     }
-    // Página que se está viendo en el modo páginas: se guarda por
-    // capítulo para retomarla al volver.
     if (name === "pgChanged") {
       const r = state.reader;
-      if (!r) return null;
-      const ch = (r.chapters || [])[r.idx];
-      if (!ch || !ch.url) return null;
+      if (!r || !r.chUrl) return null;
       let at = parseInt(String(ev.value === undefined ? "" : ev.value), 10);
       if (!(at >= 0)) at = 0;
       const ks = [];
@@ -1123,16 +1290,9 @@ export async function screenEvent(ev) {
         for (const k of kino.storage.keys()) if (k.indexOf("pg:") === 0) ks.push(k);
       } catch (e) { }
       if (ks.length > 300) for (const k of ks.slice(0, ks.length - 300)) try { kino.storage.remove(k); } catch (e) { }
-      try { kino.storage.set("pg:" + ch.url, String(at)); } catch (e) { }
+      try { kino.storage.set("pg:" + r.chUrl, String(at)); } catch (e) { }
       return null;
     }
-    // Alternar pantalla completa: oculta (o trae de vuelta) la barra de
-    // arriba y los botones de abajo del lector.
-    if (name === "lectorInm") {
-      setJson("lectorInm", getJson("lectorInm", 0) ? 0 : 1);
-      return { state: { _r: Date.now() } };
-    }
-    // Alternar tira/páginas (solo con el widget disponible).
     if (name === "modoLector") {
       if (!pagesDisponible()) return null;
       const nuevo = modoLectorPref() === "paginas" ? "tira" : "paginas";
@@ -1142,10 +1302,11 @@ export async function screenEvent(ev) {
     }
     if (name === "openSeries") {
       const slug = String(ev.arg || "");
-      if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) return null;
-      const d = await loadSeries(slug);
-      if (!d.chapters.length) return { toast: "No se encontraron capítulos." };
-      return { state: { detail: d },
+      if (!slugValido(slug)) return null;
+      // (receta MangaTrack): el detalle se abre AL INSTANTE con
+      // esqueletos; los capítulos llegan por el temporizador en
+      // segundo plano.
+      return { state: { detail: detailLoadingDe(slug) },
                route: { push: "detail", params: { slug } } };
     }
   } catch (e) {

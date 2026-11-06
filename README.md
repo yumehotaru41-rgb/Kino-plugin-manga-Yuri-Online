@@ -1,33 +1,27 @@
 # Kino Plugin — Yuri Online
 
-Plugin de [Kino](https://kinotvapp.github.io/kino-plugins/) para leer obras de [yuri-online.com](https://yuri-online.com/).
+Plugin de [Kino](https://kinotvapp.github.io/kino-plugins/) para leer obras de [yuri-online.com](https://yuri-online.com/). Desde la **v2.0.0** comparte arquitectura y experiencia con el plugin de ZonaTM0: misma pantalla, mismos botones.
 
 - **Autor**: Hotaru Yume (`hotaruyume`)
-- **Inicio**: últimas obras, **Seguir leyendo** (lo que empezaste, automáticamente), favoritos y **secciones por género** (Romance, Drama, Comedia, Fantasía, Acción) sin repetidos y con **«Ver más»**; **Biblioteca**, **Favoritos**, **Historial** y **buscador** por título.
-- **Tarjetas propias de lectura** con el título en dos filas; **navegación real** (Atrás retrocede lector → detalle → pestañas).
-- **Detalle de obra**: portada, estado, géneros, sinopsis y capítulos por AJAX; botón **«Continuar»**.
-- **Lector webcómic**: páginas verticales enteras a ancho de pantalla, sin recortes; tira vertical o **modo página a página** (Kino 0.9.81+), con **zoom por pellizco**, **«Ir a capítulo»** y **«Pantalla completa»** que oculta las barras (se recuerda).
-- **Ícono del plugin**: icon.png 96×96 declarado en el manifiesto (`icon` + `screen.iconFile`).
+- **Inicio** (idéntico a ZonaTM0): «Seguir leyendo», «Mis favoritos» y **secciones por género** (Acción, Comedia, Fantasía, Romance, Drama) sin repetidos y con **«Ver más»**; todo se pinta al instante (esqueletos) y se rellena en segundo plano. **Biblioteca**, **Favoritos**, **Historial** (con «Olvidar» por pulsación larga y «Borrar todo») y **buscador**.
+- **Detalle**: se abre al instante con esqueletos; portada, estado, géneros, sinopsis plegable, botón **«Seguir · Cap. N»** a todo el ancho, fila de iconos (Favoritos · Actualizar · Olvidar) y conmutador **«Desde lo último / Desde el principio»** para invertir el orden de los capítulos.
+- **Lector SIEMPRE a pantalla completa** (como ZonaTM0): sin barras propias ni botón flotante; **«Anterior»/«Siguiente»** están una sola vez, en la tarjeta del final del capítulo. Modo **tira vertical** con zoom o **modo página a página** (Kino 0.9.81+), que retoma la página donde la dejaste.
+- **Obras largas sin lío**: los capítulos viven en el almacenamiento del plugin, no en la pantalla — series con cientos de capítulos cargan igual (tope 490, los más recientes).
 - **Sincronización entre aparatos** (`shared`): favoritos y progreso entre teléfono y TV vinculados.
 
 ## Instalación
 
-Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **1.5.0**.
+Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **2.0.0**.
 
-## Cambios en 1.5.0
+## Cambios en 2.0.0
 
-- **Inicio por categorías**: secciones por género (Romance, Drama, Comedia, Fantasía, Acción) debajo de los rieles de siempre, cada una con su **«Ver más»** (hasta 39 obras por género).
-- **Sin repetidos**: cada obra aparece solo en la primera sección que la contiene.
-- **Carga en segundo plano**: las secciones llegan solas, una por tick, con esqueletos mientras tanto — el Inicio se pinta al instante.
+- **Reescrito con la arquitectura de ZonaTM0**, a petición del usuario: misma pantalla de inicio (secciones por género, sin «Últimas obras»), mismos botones (detalle con «Seguir · Cap. N», fila de iconos, orden de capítulos), mismo lector **siempre a pantalla completa** con navegación solo en la tarjeta del final, y nada bloquea la pantalla (esqueletos + temporizador).
+- **Contenido 18+**: se muestra la insignia «18+» en el detalle de las obras marcadas.
+- Se conservan favoritos, «Seguir leyendo» e historial guardados.
 
-## Cambios en 1.4.3
+## Cambios en 1.x
 
-- **Botón «Pantalla completa» visible siempre**: además del ojo en la barra superior, ahora hay un botón «Pantalla completa» en la barra inferior del lector (donde están Anterior/Ir a capítulo/Siguiente).
-- **«Seguir leyendo» en Inicio**: las obras que empezaste aparecen automáticamente en un riel debajo de «Últimas obras», las más recientes primero.
-
-## Cambios anteriores
-
-- **1.4.2**: páginas completas sin recortes; modo pantalla completa con botoncito para restaurar. **1.4.1**: lector a pantalla completa en TV/PC (`fill`); ícono en el manifiesto. **1.4.0**: modo páginas, «Ir a capítulo», zoom por pellizco. **1.3.2**: sin menciones restringidas en el manifiesto; títulos en dos filas. **1.3.1**: corregido el toque de las tarjetas. **1.3.0**: Atrás retrocede dentro del lienzo. **1.2.9**: fix «No se pudo cargar». **1.2.0–1.2.8**: lector vertical, AJAX, favoritos, historial, «Continuar», `shared`.
+- **1.5.0**: Inicio por categorías. **1.4.3**: botón «Pantalla completa» en la barra del lector; riel «Seguir leyendo». **1.4.2**: páginas completas sin recortes. **1.4.0**: modo páginas, «Ir a capítulo», zoom. **1.2.0–1.3.2**: lector vertical, AJAX de capítulos, favoritos, historial, «Continuar», `shared`.
 
 ## Nota legal
 
