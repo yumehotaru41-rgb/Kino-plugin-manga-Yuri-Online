@@ -5,6 +5,18 @@
 // capítulos (AJAX de Madara) y lector webcómic vertical.
 // Funciona en teléfono y TV desde el mismo árbol de nodos.
 //
+// v1.5.0 — portado de ZonaTM0 v1.2.0: Inicio por categorías.
+//   - Debajo de los rieles de siempre («Últimas obras», «Seguir
+//     leyendo», «Mis favoritos») hay una sección por género
+//     (Romance, Drama, Comedia, Fantasía, Acción) con las obras de
+//     /manga-genre/<slug>/ del sitio.
+//   - Sin repetidos: cada obra aparece solo en la PRIMERA sección que
+//     la contiene.
+//   - Al final de cada sección, botón «Ver más» que añade otra página
+//     de ese género (hasta 39 obras).
+//   - Las secciones cargan en segundo plano (temporizador «cargarRoot»,
+//     una por tick): el Inicio se pinta al instante con esqueletos.
+//
 // Requiere Kino 0.9.74 o superior (apiVersion 14, capability "screen").
 
 const BASE = "https://yuri-online.com";
@@ -545,6 +557,69 @@ async function fetchLibrary(page) {
   return seriesCards(html, 36);
 }
 
+// ------------------------------------------------- géneros (v1.5.0, de ZonaTM0)
+
+// Las secciones del Inicio: géneros del sitio (slugs de yuri-online).
+const GENEROS_INICIO = [
+  { key: "romance", label: "Romance", labelEn: "Romance" },
+  { key: "drama", label: "Drama", labelEn: "Drama" },
+  { key: "comedia", label: "Comedia", labelEn: "Comedy" },
+  { key: "fantasia", label: "Fantasía", labelEn: "Fantasy" },
+  { key: "accion", label: "Acción", labelEn: "Action" },
+];
+
+// Tope de obras por sección en el estado (que viaja en la pantalla):
+// 13 al abrir + hasta 26 más con «Ver más» (páginas del sitio).
+const GENERO_MAX = 39;
+
+// Una página de un género: /manga-genre/<slug>/ (página 1) o
+// /manga-genre/<slug>/page/<n>/ para las siguientes.
+async function fetchGenero(slug, page) {
+  const path = page > 1 ? "/manga-genre/" + slug + "/page/" + page + "/"
+    : "/manga-genre/" + slug + "/";
+  const html = await getHtml(path);
+  return seriesCards(html, 20);
+}
+
+// Una sección por género: tarjetas + «Ver más» al final. «usados» es
+// el mapa compartido entre secciones: una obra que ya salió en una
+// sección anterior NO se repite.
+function railGenero(state, g, usados) {
+  const cats = state.cats || {};
+  const cat = cats[g.key] || null;
+  if (!cat) {
+    // aún sin cargar: esqueletos de la sección mientras llega el tick
+    const sk = [];
+    for (let i = 0; i < 6; i++) sk.push({
+      type: "Card", key: g.key + "sk" + i, flush: true, children: [
+        { type: "Skeleton", shape: "block", width: 120, height: 180 }] });
+    return [
+      { type: "Text", text: g.label, textEn: g.labelEn, style: "h3", padding: 16 },
+      { type: "SingleChildScrollView", key: g.key + "skr", direction: "horizontal", padding: 16,
+        children: [{ type: "Row", gap: 8, children: sk }] },
+    ];
+  }
+  const items = Array.isArray(cat.items) ? cat.items : [];
+  const cards = [];
+  for (const it of items.slice(0, 60)) {
+    if (usados[it.slug]) continue;
+    usados[it.slug] = true;
+    cards.push(posterCard(it, "g" + g.key + "-", true));
+  }
+  if (!cards.length) return [];
+  if (items.length < GENERO_MAX) {
+    // botón «Ver más» al final de la sección
+    cards.push({ type: "ElevatedButton", key: "vm-" + g.key, icon: "expand_more",
+      labelText: "Ver más", labelTextEn: "See more",
+      onPressed: { event: "verMas", arg: g.key } });
+  }
+  return [
+    { type: "Text", text: g.label, textEn: g.labelEn, style: "h3", padding: 16 },
+    { type: "SingleChildScrollView", key: "r-" + g.key, direction: "horizontal", padding: 16,
+      children: [{ type: "Row", gap: 8, children: cards }] },
+  ];
+}
+
 // Inicio: una fila de tarjetas de Kino con lo más reciente
 async function homeBody(state) {
   let items = Array.isArray(state.inicioItems) ? state.inicioItems : null;
@@ -552,7 +627,6 @@ async function homeBody(state) {
     const html = await getHtml("/");
     items = seriesCards(html, 30);
   }
-  if (!items.length) return EMPTY_LIB;
   // riel horizontal de tarjetas propias (sin titleRail: sus items son
   // títulos de video de Kino)
   const rail = (title, titleEn, key, list) => list.length ? [
@@ -568,6 +642,10 @@ async function homeBody(state) {
     .filter((x) => x.title)
     .sort((a, b) => b.ts - a.ts)
     .slice(0, 20);
+  // v1.5.0: secciones por género, sin repetidos entre ellas
+  const usados = {};
+  let secciones = [];
+  for (const g of GENEROS_INICIO) secciones = secciones.concat(railGenero(state, g, usados));
   return {
     type: "SingleChildScrollView", key: "home", flex: 1,
     children: [{
@@ -581,7 +659,8 @@ async function homeBody(state) {
       // favoritos siempre a mano, debajo de las últimas obras
       ].concat(rail("Últimas obras", "Latest works", "latest", items))
         .concat(rail("Seguir leyendo", "Continue reading", "leyendo", leyendo))
-        .concat(rail("Mis favoritos", "My favourites", "favs", favs())),
+        .concat(rail("Mis favoritos", "My favourites", "favs", favs()))
+        .concat(secciones),
     }],
   };
 }
@@ -872,6 +951,9 @@ export async function screen({ state, route }) {
   const body = await tabBody(state);
   return {
     type: "Scaffold",
+    // v1.5.0: las secciones de género del Inicio llegan en segundo
+    // plano, una por tick — la pantalla nunca se queda esperando.
+    every: { ms: 1500, event: "cargarRoot" },
     appBar: {
       title: "Yuri Online",
       actions: [
@@ -913,6 +995,44 @@ export async function screenEvent(ev) {
         patch.libPage = 1;
       }
       return { state: patch };
+    }
+    // temporizador de la raíz: trae UNA sección de género por tick
+    // (v1.5.0, receta de ZonaTM0: nada bloquea la pantalla)
+    if (name === "cargarRoot") {
+      if ((state.tab || "inicio") !== "inicio") return null;
+      const cats = state.cats || {};
+      for (const g of GENEROS_INICIO) {
+        if (cats[g.key]) continue;
+        let items = [];
+        try {
+          items = (await fetchGenero(g.key, 1))
+            .map((x) => ({ slug: x.slug, poster: x.poster, title: x.title }));
+        } catch (e) { /* sección vacía; queda como cargada */ }
+        return { state: { cats: Object.assign({}, cats, { [g.key]: { items, page: 1 } }) } };
+      }
+      return null;
+    }
+    // «Ver más» al final de una sección de género — trae la página
+    // siguiente de ese género y la añade a la sección
+    if (name === "verMas") {
+      const key = String(ev.arg || "");
+      const g = GENEROS_INICIO.find((x) => x.key === key);
+      const cats = state.cats || {};
+      const cat = cats[key];
+      if (!g || !cat) return null;
+      if (cat.items.length >= GENERO_MAX) return { toast: "La sección ya está completa" };
+      const page = (cat.page || 1) + 1;
+      let more = [];
+      try { more = await fetchGenero(key, page); } catch (e) { /* sin red */ }
+      const vistos = {};
+      for (const it of cat.items) vistos[it.slug] = true;
+      const nuevos = more.filter((it) => !vistos[it.slug])
+        .map((x) => ({ slug: x.slug, poster: x.poster, title: x.title }));
+      if (!nuevos.length) return { toast: "No hay más obras de " + g.label };
+      let merged = cat.items.concat(nuevos);
+      if (merged.length > GENERO_MAX) merged = merged.slice(0, GENERO_MAX);
+      return { state: { cats: Object.assign({}, cats, { [key]: { items: merged, page } }) },
+        toast: "+" + nuevos.length + " en " + g.label };
     }
     if (name === "libMore") {
       const page = (state.libPage || 1) + 1;
