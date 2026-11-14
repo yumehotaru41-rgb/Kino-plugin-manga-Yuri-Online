@@ -5,13 +5,17 @@ Plugin de [Kino](https://kinotvapp.github.io/kino-plugins/) para leer obras de [
 - **Autor**: Hotaru Yume (`hotaruyume`)
 - **Inicio** (idéntico a ZonaTM0): «Seguir leyendo», «Mis favoritos» y **secciones por género** (Acción, Comedia, Fantasía, Romance, Drama) sin repetidos y con **«Ver más»**; todo se pinta al instante (esqueletos) y se rellena en segundo plano. **Biblioteca**, **Favoritos**, **Historial** (con «Olvidar» por pulsación larga y «Borrar todo») y **buscador**.
 - **Detalle**: se abre al instante con esqueletos; portada, estado, géneros, sinopsis plegable, botón **«Seguir · Cap. N»** a todo el ancho, fila de iconos (Favoritos · Actualizar · Olvidar) y conmutador **«Desde lo último / Desde el principio»** para invertir el orden de los capítulos.
-- **Lector SIEMPRE a pantalla completa** (como ZonaTM0): sin barras propias ni botón flotante; **«Anterior»/«Siguiente»** están una sola vez, en la tarjeta del final del capítulo. Modo **tira vertical** con zoom o **modo página a página** (Kino 0.9.81+), que retoma la página donde la dejaste.
+- **Lector SIEMPRE a pantalla completa y SIEMPRE desde la primera página** (como ZonaTM0): sin barras propias ni botón flotante; **«Anterior»/«Siguiente»** están una sola vez, en la tarjeta del final del capítulo. Modo **tira vertical** con zoom o **modo página a página** (Kino 0.9.81+).
 - **Obras largas sin lío**: los capítulos viven en el almacenamiento del plugin, no en la pantalla — series con cientos de capítulos cargan igual (tope 490, los más recientes).
 - **Sincronización entre aparatos** (`shared`): favoritos y progreso entre teléfono y TV vinculados.
 
 ## Instalación
 
-Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **2.0.0**.
+Requiere **Kino 0.9.74+** (apiVersion 14). Añade `yumehotaru41-rgb/Kino-plugin-manga-Yuri-Online` en Ajustes ▸ Plugins ▸ + y actualiza a la versión **2.0.1**.
+
+## Cambios en 2.0.1
+
+- **El lector empieza SIEMPRE desde la primera página**, igual que en ZonaTM0 v1.2.1: al abrir un capítulo, al pasar al siguiente o al anterior, ya no se restaura la última página vista ni una posición de scroll heredada del capítulo anterior (claves de scroll, imágenes y paginador únicas por apertura).
 
 ## Cambios en 2.0.0
 
