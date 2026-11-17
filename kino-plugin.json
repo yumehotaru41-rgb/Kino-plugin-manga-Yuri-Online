@@ -14,6 +14,9 @@
     "screen",
     "shared"
   ],
+  "categories": [
+    "manga"
+  ],
   "description": "Lee obras de yuri-online.com: lector webcómic con modo tira o página a página, Inicio por categorías, buscador, favoritos y progreso sincronizados entre tus aparatos.",
   "screen": {
     "label": "Yuri Online",
